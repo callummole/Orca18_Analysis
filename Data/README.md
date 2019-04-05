@@ -14,19 +14,24 @@ _Distractor task without steering_
 Two files:
 
 _Orca18_Distractor_BlockNumber_PPID_EndofTrial.csv_ 
+
 Contains the recorded count estimates. 
+
 Columns are: [], ppid, targetoccurence, targetnumber, trialn, EoTScore1, TargetCount1, EoTScore2, TargetCount2, EoTScore3, TargetCount3
-Most of these are self-explanatory. EoTScoreX is the recorded estimates. TargetCountX is the actual amount of times the target was presented. 
+
+Most of these are self-explanatory. EoTScoreX is the recorded estimates. TargetCountX is the actual amount of times the target was presented.   
 Empty cells are common if targetnumber is <3.
 
 
 
 _Orca18_Distractor_BlockNumber_PPID_WithinTrial.csv_ 
+
 Contains the button responses within a trial.
+
 Columns: [], ppid, targetoccurence, targetnumber, trialn, CurrentAudio, RT, ResponseCategory, Target1, Target2,	Target3
-CurrentAudio is target presented.
-RT is -1 if not responded
-ResponseCategory signifies whether it is a true positive, true negative, false positive, or false negative.
+CurrentAudio is target presented.  
+RT is -1 if not responded  
+ResponseCategory signifies whether it is a true positive, true negative, false positive, or false negative.  
 Empty cells are common if targetnumber is <3.
 
 ## Driver Task Only
