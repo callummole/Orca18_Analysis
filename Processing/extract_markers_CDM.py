@@ -174,8 +174,10 @@ if __name__ == '__main__':
 #    rootdir = "D:/Trout_Pilot5/Eyetracking/Trout_1002_1" # for initial re-write and new surface definition.           
     #rootdir = "E:/EyeTrike_Backup/Recordings/Trout/ExperimentProper/Trout_1_1"
     
-    rootdir = "E:/EyeTrike_Backup/Recordings/Trout/ExperimentProper/"
+    rootdir = "D:/EyeTrike_Backup/Recordings/Orca_Copy"
        
+    os.chdir(sys.path[0]) # change directory to root path.
+
     for dirs in os.walk(rootdir): #does it for all dirs in that folder
         path = str(dirs[0]) + "/"
         

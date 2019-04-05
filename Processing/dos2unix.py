@@ -4,6 +4,9 @@
 convert dos linefeeds (crlf) to unix (lf)
 usage: dos2unix.py 
 """
+import os, sys
+os.chdir(sys.path[0])
+
 original = "sdcalib.rmap.full.camera.pickle"
 destination = "sdcalib.rmap.full.camera_unix.pickle"
 
