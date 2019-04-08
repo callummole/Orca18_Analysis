@@ -60,37 +60,33 @@ def main(rec_dir, surf):
     
     ##Split up file according to annotations. 
     
+    trial_timestamps = pd.DataFrame(columns = ['trialcode','cogload', 'block', 'ppid', 'radii', 'count','t1','t2','t3']) 
     notes = pupil_data["notifications"]
-    trial_timestamps = pd.DataFrame(columns = ['trialcode', 'block', 'pp','sectiontype','mode','condition','count','t1','t2']) 
     entry = 0
+    
     for n in notes:
         if n['subject'] == 'annotation':
-            #collect trial type and timestamp
-            
-            print(n)
-            
+            #collect trial type and timestamp        
+        #### here you can crunch a trial to make sure that the correct timestamps are shown. 
             t = n['timestamp']
+            print ("timestamp:", t)
             label = n['label']
-            
-#            Retrieve trial code.
-            
-            i1 = label.find(' ')            
-            i2 = label.find('.')
-            if i2 == -1:
-                trialcode = label[i1+1:]    
-            else:
-                trialcode = label[i1+1:i2]                        
-            
-            reason = label[:i1] #get reason for timestamp.
-            
-            if not trialcode[0] == 'E': #errordump trial. Do not record timestamps.
-            
-                print(trialcode)
-                
-                block, pp, sectiontype, condition, count = trialcode.split('_')
-                            
-                print(reason)
-    
+            print ("label:", label)
+
+            #find reason
+            i1 = label.find('_')  #finds first underscore.
+            if i1 != -1: #if not the distractor screen 
+                reason = label[:i1]  
+                trialcode = label[i1+1:]
+
+                print ("trialcode:", trialcode)
+                print ("reason:", reason)                        
+                if ("Easy" in label) or ("Hard" in label):
+
+                    exp_id, cogload, ppid, radii, count = trialcode.split('_')
+                    block = 0 #add zero because no block specified.
+                else:
+                    exp_id, cogload, block, ppid, radii, count = trialcode.split('_')
             
                 # check if the trialcode is already in the database. I want one row per trialcode. 
                 mask =  trial_timestamps[trial_timestamps['trialcode'].str.contains(trialcode)]
@@ -102,38 +98,30 @@ def main(rec_dir, surf):
                         
                     if "Sta" in reason:
                         trial_timestamps.loc[idx,'t1'] = t
-                    elif "Fin" in reason:
-                        trial_timestamps.loc[idx,'t2'] = t
-                    
+                    elif "Dis" in reason:
+                        trial_timestamps.loc[idx,'t2'] = t                            
+                    elif "End" in reason:
+                        trial_timestamps.loc[idx,'t3'] = t                                        
                     
                 else: 
                     
-                    # create new entry. 
-                    mode = "Z"
-                    if "Man" in reason:
-                        mode = "M"
-                    elif "Aut" in reason:
-                        mode = "A"
-                    elif "PID" in reason:
-                        mode = "P"
-                    elif "Int" in reason:
-                        mode = "I"
-                    
+                    # create new entry.                                         
                     if "Sta" in reason:
                         t1 = t
                         t2 = 0
-                    elif "Fin" in reason:
+                        t3 = 0
+                    elif "Dis" in reason: #time at disengagement
                         t1 = 0
                         t2 = t
+                        t3 = 0
+                    elif "End" in reason:
+                        t1 = 0
+                        t2 = 0
+                        t3 = t
                             
-                    row = [trialcode, block, pp, sectiontype, mode, condition, count, t1, t2]    
+                    row = [trialcode, cogload, block, ppid, radii, count, t1, t2, t3]    
                     trial_timestamps.loc[entry,:] = row
                     entry += 1    
-                                    
-    #mynote = notes[-1] #annotation is always at the end. 
-    #trialtype = mynote['label']
-    #print (notes)
-    #print('trialtype: ', trialtype) 
     print (trial_timestamps)
     
     trial_timestamps.to_csv(rec_dir + "Eyetrike_trialtimestamps.csv")
@@ -187,8 +175,10 @@ def main(rec_dir, surf):
             print("m from screen:", mfromscreen)
 if __name__ == '__main__':
     #rootdir = sys.argv[1]
+
+    os.chdir(sys.path[0]) # change directory to root path.
     
-    rootdir = "E:/EyeTrike_Backup/Recordings/Trout/ExperimentProper/"         
+    rootdir = "D:/EyeTrike_Backup/Recordings/Orca_Copy"         
         
     #surf = sys.argv[2]
     #surf = "C:/Users/psccmo/OneDrive - University of Leeds/Research/Student-Projects_2017-18/Sparrow-Crow-17/surface_definitions"

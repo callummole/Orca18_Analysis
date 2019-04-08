@@ -36,131 +36,80 @@ Look at how their screen tracker and surface transformations do this.
 """
 
 if __name__ == '__main__':
-	#rootdir = sys.argv[1] 
-    #rootdir = "E:/Masters_17-18_RunningTotal_Lastupdate_250118/PG_AW15F" #directory for eyetracking files. 
-    #rootdir = "E:/Masters_17-18_RunningTotal_Lastupdate_250118/KH12F/Crow17_KH12F/001"
-    #rootdir = "E:/Masters_17-18_RunningTotal_Lastupdate_250118/"
-    rootdir = "E:/Masters_17-18_RunningTotal_Lastupdate_250118/KH12F/Crow17_KH12F/002/"
-    rootdir = "C:/Users/psccmo/OneDrive - University of Leeds/Research/Student-Projects_2017-18/Sparrow-Crow-17/NewUntouched/000/"
-    #save the pupil-corrected files in the analysis folder.
-    savedir = "C:/Users/psccmo/OneDrive - University of Leeds/Research/Student-Projects_2017-18/Sparrow-Crow-17/Data/EyetrackingData/"
-    resave = False #boolean whether to move files to savedir
-    resx, resy = 1280,720
-    marker_corners_norm = np.array(((0,0),(1,0),(1,1),(0,1)),dtype=np.float32)
-    marker_box = np.array([[[0,0],[1,0],[1,1],[0,1],[0,0]]],dtype=np.float32) #this is for perspectiveTransform.
-    
-    print (rootdir)
+	
+    rootdir = "D:/EyeTrike_Backup/Recordings/Orca_Copy/Orca18_Easy_P01/000"
+        
     for dirs in os.walk(rootdir):
         path = str(dirs[0]) + "/"
         print (path)
         if os.path.exists(path + 'pupil_data'):
-            #let's look at the square marker cache vs square_marker_cache old.
-            persistent_playercache = Persistent_Dict(os.path.join(rootdir,'square_marker_cache_player'))
-            playercache = persistent_playercache.get('marker_cache',None)
-            
-            persistent_correctedcache = Persistent_Dict(os.path.join(rootdir,'square_marker_cache_corrected'))
-            correctedcache = persistent_correctedcache.get('marker_cache',None)
-            
-            #both are lists.
-            pcache = pd.DataFrame(playercache)
-            ccache = pd.DataFrame(correctedcache)
-            
-            
-            for idx, c in enumerate(playercache):
-                a = 1
-            
-       # if os.path.exists(path + 'markers.npy'):
-            #marker is an 1 to N frames array. 
-            #start plot.
-            
-#            all_markers = np.load(path + 'markers.npy')
-#            for frm in all_markers: #each frame
-#                t = frm["ts"] #timestamp
-#                markers = frm["markers"] #produces a list.
-#                m_count = len(markers) #amount of markers detected in that frame.
-#                plt.plot()
-#                #plt.axis([0,1,0,1])
-#                plt.axis([0,resx,0,resy])
-#                i = 1
-#                for m in markers:
-#                   #simply scaling markers doesn't seem to work.
-#                    #centre = m['centroid'] #pick centroid for marker.
-#                   # c_scaled = (centre[0]/Resolution[0],centre[1]/Resolution[1])  
-#                    print ("markers:", i)
-#                    i +=1
-#                    verts = m['verts']                   
-#                    v = np.array(verts, dtype=np.float32) #need to be in this type for perspective transform.
-#                    ptrans = cv2.getPerspectiveTransform(marker_corners_norm, v)
-#                    pbox =  cv2.perspectiveTransform(marker_box, ptrans)
-#                    #pbox = verts
-#                    vi=1
-#                    for pp in pbox:
-#                        for p in pp:
-#                            print ("verts:", vi)
-#                            vi += 1
-#                            #p_scaled = p[0]/resx, p[1]/resy                                                                      
-#                            #plt.plot(p_scaled[0],p_scaled[1],'b.')
-#                            plt.plot(p[0],p[1],'b.')
-#                plt.show()
-#                    
+        
+            data = load_object(path + "/pupil_data")            
+
+            trial_timestamps = pd.DataFrame(columns = ['trialcode','cogload', 'block', 'ppid', 'radii', 'count','t1','t2','t3']) 
+            notes = data["notifications"]
+            entry = 0
+           
+            for n in notes:
+                if n['subject'] == 'annotation':
+                    #collect trial type and timestamp        
+                #### here you can crunch a trial to make sure that the correct timestamps are shown. 
+                    t = n['timestamp']
+                    print ("timestamp:", t)
+                    label = n['label']
+                    print ("label:", label)
+
+
+                    #find reason
+                    i1 = label.find('_')  #finds first underscore.
+                    if i1 != -1: #if not the distractor screen 
+                        reason = label[:i1]  
+                        trialcode = label[i1+1:]
+
+                        print ("trialcode:", trialcode)
+                        print ("reason:", reason)                        
+                        if ("Easy" in label) or ("Hard" in label):
+
+                            exp_id, cogload, ppid, radii, count = trialcode.split('_')
+                            block = 0
+                        else:
+                            exp_id, cogload, block, ppid, radii, count = trialcode.split('_')
                     
-                
-            #centroids = [m['centroid']for m in markers]
-			#print ("Markers: ", markers)
-            data = load_object(path + "/pupil_data")
-			#data = pickle.load(path + "/pupil_data_corrected")
-            #raw data is dictionary with four lists: pupil_positions, gaze_positions, notifications, surfaces.
-#            surfaces = data["surfaces"]
-#            with open(os.path.join(path, 'gaze_positions_on_surface_uncorrected.csv'), 'w', encoding='utf-8', newline='') as csvfile:
-#                csv_writer = csv.writer(csvfile, delimiter=',')
-#                csv_writer.writerow(('world_timestamp', 'surface_timestamp', 'x_norm',
-#                                    'y_norm', 'on_srf', 'confidence'))
-#                for s in surfaces:
-#                    #surface has name, uid, m_to_screen, m_from_screen, gaze_on_srf, timestamp, camera_pose_3d
-#                    #this is the uncorrected surface information obtained online from the surface tracker plugin.
-#                    ts = s["timestamp"] #world timestamp.
-#                    gos = s["gaze_on_srf"]
-#                    if gos is not None:                        
-#                        for i in range(0,len(gos)):
-#                            gp = gos[i]
-#                            csv_writer.writerow((ts,gp['base_data']['timestamp'],
-#                            gp['norm_pos'][0], gp['norm_pos'][1],                            
-#                            gp['on_srf'], gp['confidence']))
-                
-            #NOW SAVE INTO ONEDRIVE FOLDER.
-            
-#            for d in data:
-#                print (d)
-            note = data["notifications"]
-            annotate = note[-1] #annotation is always at the end. 
-            print (annotate)
-            label = annotate['label']
-            print (label)
-            for n in note:
-                print(n)
-			
-			#gaze = data["gaze_positions"]
-			#for g in gaze:
-		#		print (g['norm_pos'])
-			
-           # pupil = data["pupil_positions"]
-            #for p in pupil:
-             #   print (p)
-
-
-			A = load_object(path + "/annotations")
-			for a in A:
-				label = a['label']
-				print (label )
-			print (A)
-            
-            # if resave:
-            #     #in string, find the end of the master folder, then take that and the rest and append it to savedir.
-            #     idx = path.find('18/')
-            #     savepath = path[idx+2:]
-            #     savefile = savedir+savepath  
-            #     os.makedirs(savefile)
-            #     save_object(data, savefile + "/pupil_data_corrected")
-            #     np.save(savefile+"/markers.npy",markers)
-
+                        # check if the trialcode is already in the database. I want one row per trialcode. 
+                        mask =  trial_timestamps[trial_timestamps['trialcode'].str.contains(trialcode)]
+                        print("Mask: ", mask)
+                        print("MaskEmpty: ", mask.empty)
+                        if not mask.empty:
+                            # if entry already exists, add the timestamp to the relevant column.
+                            idx = trial_timestamps.index[trial_timestamps['trialcode']==trialcode]
+                                
+                            if "Sta" in reason:
+                                trial_timestamps.loc[idx,'t1'] = t
+                            elif "Dis" in reason:
+                                trial_timestamps.loc[idx,'t2'] = t                            
+                            elif "End" in reason:
+                                trial_timestamps.loc[idx,'t3'] = t
+                            
+                            
+                            
+                        else: 
+                            
+                            # create new entry.                                         
+                            if "Sta" in reason:
+                                t1 = t
+                                t2 = 0
+                                t3 = 0
+                            elif "Dis" in reason:
+                                t1 = 0
+                                t2 = t
+                                t3 = 0
+                            elif "End" in reason:
+                                t1 = 0
+                                t2 = 0
+                                t3 = t
+                                    
+                            row = [trialcode, cogload, block, ppid, radii, count, t1, t2, t3]    
+                            trial_timestamps.loc[entry,:] = row
+                            entry += 1    
+            print (trial_timestamps)
 
