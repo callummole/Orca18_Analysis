@@ -1,0 +1,128 @@
+---
+title: 'Silent Failures in Automation. Pilot dataset Report'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document serves as a report for a first run of the pre-registered experiment https://osf.io/s6vam/. The experiment examines silent failures in a highly controlled setting. Each trial starts with automated steering. In some trials a bias is introduced that causes the vehicle to veer off the road either suddenly (within 1.5 s) or gradually (~ 4 s). Participants are required to keep within the road edges and intervene if they feel that it is necessary. They complete the task without distraction or with a easy or difficult distraction. There are also two bend radii used: sharp (40 m) or gradual (80 m).
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+library(magrittr) #for extra pipe functions
+library(cowplot)
+library("wesanderson")
+
+#theme for plots on TRANSITION grant.
+theme_transition <- theme_classic() +
+  theme(strip.background = element_rect(fill=NA,color=NA), 
+        strip.text = element_text(face="bold",colour="black",size="8"), 
+        axis.title = element_text(face="bold",colour="black",size="8"),
+        axis.text.x = element_text(vjust=-.5),
+        axis.text.y = element_text(vjust=.5),
+        axis.text = element_text(face="plain",colour="black",size="7"),
+        legend.text = element_text(face="plain",colour="black",size="7"),
+        legend.title = element_text(face="bold",colour="black",size="8"),
+        legend.key = element_blank(),
+        panel.grid.major.y = element_line(color="grey85",size=.2, linetype = 2))
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/Users/psccmo/Orca18_Analysis/Post-Processing/")
+
+#load steergaze data
+steergazedata <- readRDS("orca_steergazedata.rds")
+
+#add left bend
+steergazedata <- steergazedata %>% 
+  mutate(bend = ifelse(trialtype_signed < 0, "left", "right"))
+
+steergazedata[steergazedata$bend == "left", "hangle"] <- steergazedata[steergazedata$bend == "left", "hangle"]*-1 
+
+
+
+steergazedata <- steergazedata %>% 
+  rename(SWV = SWA) %>% 
+  mutate(SWA = SWV * 90)
+
+```
+
+
+### Technical Errors
+
+This experiment stands as a lesson for the need to conduct a full technical pilot - running a participant through the entire experiment then putting that data through the entire analysis workflow. Due to time pressures we often do _some_ piloting to ostensibly check data saving, condition indexing etc. But we do not very often take the time to process the data through analysis scripts. In this case the data looked like it was saving correctly when piloting. But there were two key errors. First, the distraction performance files were overwritten when the driver was also steering (we still have the baseline - no steering - distraction performance files). Secondly, the "unique" filename for saving individual trials did not include the yawrate offsets in the title. So, in effect these trials were overwritten and only the last six (randomised) trials were saved for each radii, irrespective of yawrates offsets.
+
+This means that we only have a small amount of data to work with, and the amount of trials performed (or, to be more precise, saved) for each condition is random between conditions. Fig 1 shows how many trials we have. The expected trialcount for each condition is 180 trials in the dataset.
+
+
+
+```{r data logging, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. A) Amount of trials in each condition"}
+
+steergaze_trial <- steergazedata  %>% 
+  group_by(ppid, radius, yawrate_offset, cogload, block, count, .drop = F) %>% 
+  summarize(trialcode = first(trialcode))
+
+
+steergaze_expanded_counts <- steergaze_trial %>% 
+  ungroup() %>% 
+  complete(ppid, radius, yawrate_offset, cogload, 
+           fill = list(trialcode = 99)) %>% 
+  group_by(radius, yawrate_offset, cogload, .drop = FALSE) %>% 
+  tally()
+           
+expected_trialcount <- 30 * 6 #30 participants x 6 trials in each condition.
+
+#change the yawrate_offsets to factors.
+steergaze_expanded_counts <- steergaze_expanded_counts %>% 
+  mutate(failure_type = case_when(yawrate_offset %in% c(-.2, .15) ~ "None",
+                                  yawrate_offset == -9 ~ "Sudden",
+                                  yawrate_offset == -1.5 ~ "Gradual"))
+
+steergaze_expanded_counts$cogload <- factor(steergaze_expanded_counts$cogload, levels = c("None", "Easy", "Hard"))
+steergaze_expanded_counts$failure_type <- factor(steergaze_expanded_counts$failure_type, levels = c("None", "Gradual", "Sudden"))
+
+#plot counts.
+ggplot(steergaze_expanded_counts, aes(y = n, x = factor(cogload), fill = factor(failure_type))) +
+  facet_wrap(~radius) +
+  theme_transition +
+   geom_bar(stat="identity", position=position_dodge()) +
+  scale_fill_manual(values = wes_palette("BottleRocket2"), name = "Failure Type") +
+  xlab("Cog Load") +
+  ylab("Amount of Trials") +
+  scale_y_continuous(sec.axis = sec_axis(~./180 * 100, name = "Proportion of Expected Data [%]"))
+
+```
+
+Fig 1 shows that for the distraction conditions we only have 20-30 % of the expected data. For driving without distraction we have slightly more because there are two blocks. For the trials we do have we have complete steering and gaze data, so at the very least the reduced data set will be useful at tweaking the design for an improved re-run, and for developing the modelling architecture.
+
+### Cognitive Load difficulty.
+
+ - baseline differences in reaction time and % correct. 
+ 
+### Steering.
+
+### Gaze
+
+### Steering and Gaze
+
+### with/without automation.
+
+### plots of steering trajectories.
+
+### plots of gaze. 
+
+
