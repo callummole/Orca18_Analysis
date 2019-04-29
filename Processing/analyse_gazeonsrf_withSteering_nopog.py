@@ -274,36 +274,40 @@ if __name__ == '__main__':
                     upper = allgaze_df['gaze_timestamp'] < maxt
                     trial_gazedata = allgaze_df.loc[lower & upper, :].copy() 
                     
-                    print("Gaze Data length: ", len(trial_gazedata))
+                    if len(trial_gazedata) == 0:
+                        print ("ZERO LENGTH:", trial)
+                    else:
 
-                    #carry over section order.
+                        print("Gaze Data length: ", len(trial_gazedata))
+
+                        #carry over section order.
+                                            
+                        #### Load Steering Timestamps of Same Trial ###########                        
+                        #recalculate max and min so that gaze and steering data span same range for interpolation
+                        mint = min(trial_gazedata['gaze_timestamp'].values)
+                        maxt = max(trial_gazedata['gaze_timestamp'].values)
+                        
+                        df_steer = LoadSteering(steerdir,trial,maxt, mint) #loads steering file into a df.
+                    #   
+                        print("steering data length: ", len(df_steer))
+                    
+                        df_stitch = StitchGazeAndSteering(trial_gazedata,df_steer) #interpolates gaze with simulator timestamps.                        
                                         
-                    #### Load Steering Timestamps of Same Trial ###########                        
-                    #recalculate max and min so that gaze and steering data span same range for interpolation
-                    mint = min(trial_gazedata['gaze_timestamp'].values)
-                    maxt = max(trial_gazedata['gaze_timestamp'].values)
-                    
-                    df_steer = LoadSteering(steerdir,trial,maxt, mint) #loads steering file into a df.
-                #   
-                    print("steering data length: ", len(df_steer))
-                
-                    df_stitch = StitchGazeAndSteering(trial_gazedata,df_steer) #interpolates gaze with simulator timestamps.                        
-                                    
-                    print (list(df_stitch.columns.values))
-                    
-                    #Add trial identifiers to df_stitch.                
-                    df_stitch['trialcode'] = trial
-                    df_stitch['count'] = row['count'] 
-                    df_stitch['cogload'] = row['cogload']        
-                    df_stitch['ppid'] = row['ppid']
-                    df_stitch['radii'] = row['radii']
-                    df_stitch['block'] = row['block']     
+                        print (list(df_stitch.columns.values))
+                        
+                        #Add trial identifiers to df_stitch.                
+                        df_stitch['trialcode'] = trial
+                        df_stitch['count'] = row['count'] 
+                        df_stitch['cogload'] = row['cogload']        
+                        df_stitch['ppid'] = row['ppid']
+                        df_stitch['radii'] = row['radii']
+                        df_stitch['block'] = row['block']     
 
-                    print (list(df_stitch.columns.values))                         
+                        print (list(df_stitch.columns.values))                         
+                        
+                        print ("added to master df")
                     
-                    print ("added to master df")
-                
-                    master_stitch = pd.concat([master_stitch,df_stitch])
+                        master_stitch = pd.concat([master_stitch,df_stitch])
             compute_time = timer()-begin
             print("gaze took %f seconds" % compute_time)
                 

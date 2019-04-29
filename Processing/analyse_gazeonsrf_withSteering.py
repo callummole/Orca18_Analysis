@@ -489,9 +489,16 @@ if __name__ == '__main__':
    # marker_box = np.array([[[0,0],[1,0],[1,1],[0,1],[0,0]]],dtype=np.float32) #this is for perspectiveTransform.
    
     #CREATE MIDLINE. Use Function from Main Experiment
-    TrackData = TrackMaker(10000)
-    midline = TrackData[0]     
-    trackorigin =TrackData[1]
+
+
+    #### will need a separate track file per trialcode for 
+    rootpath = '..\\TrackMaker\\'
+    sys.path.append(rootpath)
+    import simTrackMaker
+
+    L = 16#2sec.
+    myStraight  = simTrackMaker.lineStraight(startpos = [0,0], length= 16)#, texturefile='strong_edge_soft.bmp')
+    
     
     #varnames = np.array('pp','tn','cn','Fix','Bend','Exp',')
     #measures: LookaheadDistance; HighestFixationDensity,  
