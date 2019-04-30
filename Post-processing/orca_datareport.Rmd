@@ -1,5 +1,5 @@
 ---
-title: 'Silent Failures in Automation. Pilot dataset Report'
+title: 'Silent Failures in Automation. Pilot dataset Calculating Measures and Descriptive Plotting'
 author: "Callum Mole"
 output:
   html_document:
@@ -93,14 +93,15 @@ steergaze_expanded_counts <- steergaze_expanded_counts %>%
                                   yawrate_offset == -1.5 ~ "Gradual"))
 
 steergaze_expanded_counts$cogload <- factor(steergaze_expanded_counts$cogload, levels = c("None", "Easy", "Hard"))
-steergaze_expanded_counts$failure_type <- factor(steergaze_expanded_counts$failure_type, levels = c("None", "Gradual", "Sudden"))
+steergaze_expanded_counts$failure_type <- factor(steergaze_expanded_counts$failure_type, levels = c("Sudden", "Gradual", "None"))
+
 
 #plot counts.
 ggplot(steergaze_expanded_counts, aes(y = n, x = factor(cogload), fill = factor(failure_type))) +
   facet_wrap(~radius) +
   theme_transition +
    geom_bar(stat="identity", position=position_dodge()) +
-  scale_fill_manual(values = wes_palette("BottleRocket2"), name = "Failure Type") +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2", n=3)), name = "Failure Type") +
   xlab("Cog Load") +
   ylab("Amount of Trials") +
   scale_y_continuous(sec.axis = sec_axis(~./180 * 100, name = "Proportion of Expected Data [%]"))
@@ -110,8 +111,6 @@ ggplot(steergaze_expanded_counts, aes(y = n, x = factor(cogload), fill = factor(
 Fig 1 shows that for the distraction conditions we only have 20-30 % of the expected data. For driving without distraction we have slightly more because there are two blocks. For the trials we do have we have complete steering and gaze data, so at the very least the reduced data set will be useful at tweaking the design for an improved re-run, and for developing the modelling architecture.
 
 ### Cognitive Load difficulty.
-
- - baseline differences in reaction time and % correct. 
 
 ```{r load cognitive task data, echo=FALSE, message=FALSE, warning=FALSE}
 
@@ -165,7 +164,7 @@ for (file_block in file_lists){ #loop through  each block so you can add a block
   
   for (file_name in file_block){
     
-    print(file_name)
+    #print(file_name)
     
     #separate dataframe if EoT or WiT
     
@@ -173,7 +172,7 @@ for (file_block in file_lists){ #loop through  each block so you can add a block
     
       EoT_newdata <- read.csv(paste(file_path,'/',file_name, sep = "")) #if already exists add to data frame.
       
-      head(EoT_newdata)
+      #head(EoT_newdata)
       
       EoT_newdata <- EoT_newdata %>% 
         mutate(trialn = trialn + trial_add,
@@ -201,7 +200,6 @@ for (file_block in file_lists){ #loop through  each block so you can add a block
 ```
 
 
-Now we have loaded the cognitive load data, let's crunch the numbers.
 
 ```{r calculate measures, echo=FALSE, message=FALSE, warning=FALSE}
   
@@ -268,7 +266,7 @@ SummaryMeasures <- merge(SummaryTrialMeasures, EoT_avgerror, by = c("ppid","tria
 #drop some extra columns created by merging for some unimportant reasons
 SummaryMeasures <- select(SummaryMeasures, -targetoccurence.x, -targetnumber.x, -targetoccurence.y, -targetnumber.y)
 
-head(SummaryMeasures)
+#head(SummaryMeasures)
 ```
 
 We only have the cognitive performance for baseline (without steering). Here we plot three indices of performance: _Percentage Correct_ (PC, True positives + True negatives / total letters heard); _Reaction Time_ (RT, reaction time for True positives); _Proportional Absolute Count Error_ (average distance from the true count, expressed as a proportion of the total amount of targets heard).
@@ -320,6 +318,163 @@ Let's see how this gets reflected in steering measures.
 
 ### Steering.
 
+The pre-registration specifies two steering related hypotheses:
+
+-	__H1__: Participants will react slower to silent failures as cognitive load increases (i.e. more time will elapsed from the yaw rate offset to the driver disengaging the automation).
+
+-	__H2__: Participants will react with less aggression as cognitive load increases, bringing the vehicle back to the centre more slowly (i.e. they will be smoother and make less corrections). 
+
+These two hypotheses will be analysed in turn.
+
+#### H1: Speed of take-over
+
+The pre-registration states that we will calculate two measures:
+
+- RT from yawrate-drift onset to disengagement of the system via a button press (can be negative if they take over before the yaw-rate bias is introduced). I will refer to this measure as RT~takeover~.
+
+- RT from yawrate-drift onset to first steering movement (RT~steer~).
+
+For the purposes of a quick look at the pilot dataset I will only calculate RT~takeover~ for now.
+
+<!-- 
+Future plots:
+- A birdseye plot showing the points at takeover and the subsequent trajectories would be illustrative. These would have to be reset to the same onset time  
+- scatter plot showing whether onset time and/or pre-recorded trajectory choice influenced reaction times.
+-->
+
+```{r calculate RT takeover measure, echo=FALSE, message=FALSE, warning=FALSE}
+
+### need to calculate RTs.
+if (!exists("steergazedata")){
+  #load steergaze data
+  steergazedata <- readRDS("orca_steergazedata.rds")
+  
+  #add left bend
+  steergazedata <- steergazedata %>% 
+    mutate(bend = ifelse(trialtype_signed < 0, "left", "right"))
+  
+  steergazedata[steergazedata$bend == "left", "hangle"] <- steergazedata[steergazedata$bend == "left", "hangle"]*-1 
+  
+  
+  
+  steergazedata <- steergazedata %>% 
+    rename(SWV = SWA) %>% 
+    mutate(SWA = SWV * 90)
+}
+
+#create function retrieving RT-takeover.
+disengage_RT <- function(onsettime, timestamp_trial, autoflag){
+
+  #pick first frame where autoflag == false, then take the timestamp and minus the onset_time
+  auto_false <- which(autoflag == "FALSE")
+  disengage_index <- first(auto_false)
+  disengage_trialtime <- timestamp_trial[disengage_index]
+  onset_time <- first(onsettime)
+  RT <- disengage_trialtime - onset_time #can be negative
+  return(RT)
+}
+
+
+#create factors
+steergazedata$ppid <- as.factor(steergazedata$ppid)
+steergazedata$radius <- as.factor(steergazedata$radius)
+steergazedata$yawrate_offset <- as.factor(steergazedata$yawrate_offset)
+steergazedata$cogload <- as.factor(steergazedata$cogload)
+
+steergaze_trialavgs <- steergazedata  %>% 
+  group_by(ppid, radius, yawrate_offset, cogload, block, count) %>% 
+  summarize(RT = disengage_RT(OnsetTime, timestamp_trial, AutoFlag),
+            disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
+            )
+ 
+#create new column called failure type.
+steergaze_trialavgs <- steergaze_trialavgs %>% 
+  mutate(failure_type = yawrate_offset)
+
+#refactor.
+levels(steergaze_trialavgs$failure_type)[1] = "Sudden"
+levels(steergaze_trialavgs$failure_type)[2] = "Gradual"
+levels(steergaze_trialavgs$failure_type)[3] = "None"
+levels(steergaze_trialavgs$failure_type)[4] = "None"
+
+#disengage %
+disengage_perc <- steergaze_trialavgs %>% 
+  ungroup() %>% 
+  filter(failure_type == "None") %>% 
+  summarise(pc = sum(disengaged) / n()) 
+  
+
+```
+
+```{r plotting RT takeover, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 3. RT takeover across failure types"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+
+ggplot(steergaze_trialavgs, aes(x = RT, group = factor(failure_type), fill = factor(failure_type))) +
+  geom_density(alpha = .8) +
+  xlim(c(0,10)) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  theme_transition +
+  xlab(expression("RT"["takeover"]*" (s)"))
+
+```
+
+Fig 3 shows massive differences in how quickly drivers disengage the automation after the yawrate onset. In the _None_ condition drivers disengaged the system in `r as.double(disengage_perc) * 100` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
+
+```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. RT takeover across cognitive loads"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+
+p_sudden <- ggplot(filter(steergaze_trialavgs, failure_type == "Sudden"), 
+                   aes(x = RT, group = factor(cogload), col = factor(cogload), fill = factor(cogload))) +
+  geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
+  geom_density(size = 1.2, fill = NA) +
+  xlim(c(0,NA)) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  theme_transition +
+  xlab(expression("RT"["takeover"]*" (s)")) 
+
+
+  
+p_gradual <- ggplot(filter(steergaze_trialavgs, failure_type == "Gradual"), 
+                   aes(x = RT, group = factor(cogload), col = factor(cogload), fill = factor(cogload))) +
+  geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
+  geom_density(size = 1.2, fill = NA) +
+  xlim(c(0,NA)) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  theme_transition +
+  xlab(expression("RT"["takeover"]*" (s)")) 
+
+p_none <- ggplot(filter(steergaze_trialavgs, failure_type == "None"), 
+                   aes(x = RT, group = factor(cogload), col = factor(cogload), fill = factor(cogload))) +
+  geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
+  geom_density(size = 1.2, fill = NA) +
+  xlim(c(0,NA)) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  theme_transition +
+  xlab(expression("RT"["takeover"]*" (s)")) 
+
+legend <- get_legend(p_sudden)
+p_rt_takeover <- plot_grid(p_sudden + theme(legend.position="none"), 
+               p_gradual + theme(legend.position="none"), 
+               p_none + theme(legend.position="none"),
+               labels = c("Sudden", "Gradual","No Failure"), nrow=1, hjust = -1)
+p_rt_takeover_legend <- plot_grid(p_rt_takeover, legend, rel_widths = c(4,.5))
+show(p_rt_takeover_legend)
+
+  
+
+```
+Fig 4 shows cognitive load differences in RT~takeover~ within failure type. For Sudden failures (leftmost in Fig 4) there are clear difference between None, Easy, and Hard. People switch to manual mode quickest when not performing a distractor task; they switch slowest when the distractor task is more difficult. This difference is less pronounced for Gradual failures (middle) and No failures (right). Part of the difficulty in interpreting the distributions is due to the depleted dataset. In the Sudden condition all the data falls within fairly narrow regions (0-2s) so smooth density estimates are observed despite the relatively low numbers of trials. In the Gradual Failure and No Failure conditions the data is spread out over a wider range so there begin to be 'gaps' in the distribution (effectively, unsampled space). Therefore the density estimates are bumpier and it is more difficult to see clear differences. The histograms in the background how the gaps and spikes correspond to bumps in the density estimate. Nevertheless, in the Gradual condition I am tempted to predict that with more data we would see clear differences begin to emerge between the no load condition and when the driver is cognitively loaded. 
+
+__H1 Summary__: of course this needs inferential statistics to support my eyeballing, but I will tentatively suggest that reaction time to silent failures does indeed increase as cognitive load increases, though this effect depends on the severity of the failure.
+
+
+#### 
+
 ### Gaze
 
 ### Steering and Gaze
@@ -331,3 +486,8 @@ Let's see how this gets reflected in steering measures.
 ### plots of gaze. 
 
 
+<!-- 
+Future Analysis:
+- Are any of the variables affected by onset time?
+- Are any of the variables affected by which automated trajectory is being played? 
+-->
