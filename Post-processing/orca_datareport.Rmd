@@ -218,6 +218,16 @@ SummaryRTs <- WiT_TruePos %>% group_by(ppid, trialn) %>% summarise(
   meanRT = mean(RT),
   stdRT = sd(RT))
 
+#Calculate the amount of each type of responses
+SummaryCounts <- WiT_RTfiltered %>% group_by(ppid, trialn) %>% summarise(
+  targetnumber = first(targetnumber),
+  targetoccurence = first(targetoccurence),
+  TruePos = sum(ResponseCategory==1),
+  FalseNeg = sum(ResponseCategory==2), 
+  FalsePos = sum(ResponseCategory==3),
+  TrueNeg = sum(ResponseCategory==4), 
+  TotalResponses=n())
+
 SummaryCounts <- mutate(SummaryCounts, Perc_Correct = (TruePos + TrueNeg)/ TotalResponses)
 
 
@@ -233,7 +243,14 @@ EoT_dataframe <- mutate(EoT_dataframe,
                         Error3 = EoTScore3 - TargetCount3)
 
 #Calculate the total absolute error and divide by targetnumber
-EoT_dataframe <- mutate(EoT_dataframe, AvgCountError = (abs(Error1) + abs(Error2) + abs(Error3)) / targetnumber)
+EoT_dataframe <- EoT_dataframe %>% 
+  mutate(totalcounterror = abs(Error1) + abs(Error2) + abs(Error3),
+         totaltargets = abs(TargetCount1) + abs(TargetCount2) + abs(TargetCount3),
+         avgcounterror = totalcounterror / targetnumber,
+         proportionalcounterror = totalcounterror / totaltargets
+         )
+                            
+
 
 
 
@@ -243,7 +260,7 @@ EoT_dataframe <- mutate(EoT_dataframe, AvgCountError = (abs(Error1) + abs(Error2
 SummaryTrialMeasures <- merge(SummaryCounts, SummaryRTs, by = c("ppid","trialn"), all.x = TRUE)
 
 #only select the columns we are interested in 
-EoT_avgerror <- select(EoT_dataframe, ppid, trialn, targetnumber, targetoccurence, AvgCountError)
+EoT_avgerror <- select(EoT_dataframe, ppid, trialn, targetnumber, targetoccurence, totalcounterror, totaltargets, avgcounterror, proportionalcounterror)
 
 #merge within trial and EoT measures together
 SummaryMeasures <- merge(SummaryTrialMeasures, EoT_avgerror, by = c("ppid","trialn"))
@@ -251,15 +268,56 @@ SummaryMeasures <- merge(SummaryTrialMeasures, EoT_avgerror, by = c("ppid","tria
 #drop some extra columns created by merging for some unimportant reasons
 SummaryMeasures <- select(SummaryMeasures, -targetoccurence.x, -targetnumber.x, -targetoccurence.y, -targetnumber.y)
 
+head(SummaryMeasures)
 ```
 
-```{r plotting for informal hypothesis exploration, echo=FALSE, message=FALSE, warning=FALSE}
+We only have the cognitive performance for baseline (without steering). Here we plot three indices of performance: _Percentage Correct_ (PC, True positives + True negatives / total letters heard); _Reaction Time_ (RT, reaction time for True positives); _Proportional Absolute Count Error_ (average distance from the true count, expressed as a proportion of the total amount of targets heard).
 
-#plot comparison to assess whether people respond differently to the two cognitive tasks when not driving.
+```{r plot Cognitive Task Performance, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 2. Cognitive Task Performance. A) Percentage Correct. B) Reaction Time. C-D) Absolute Count Error"}
 
+# box plots for absolute count error.
+
+#so I do not repeat myself below
+addscale <- scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load", labels = c("1"="Easy", "3"="Hard"))
+changexlabels <- scale_x_discrete(name = "Cognitive Load", labels=c("1" = "Easy", "3" = "Hard"))
+
+#Example 2: plot ACE for each targetnumber
+p_rt <- ggplot(data=SummaryMeasures, aes(y=meanRT, x=factor(targetnumber), fill = factor(targetnumber))) + 
+  geom_boxplot(outlier.size = 1) +
+  addscale +
+  theme_transition +
+  changexlabels + ylab ("Mean RT for True Positives (s)")
+  
+p_pc <- ggplot(data=SummaryMeasures, aes(y=Perc_Correct, x=factor(targetnumber), fill = factor(targetnumber))) + 
+  geom_boxplot(outlier.size = 1) +
+  addscale +
+  theme_transition +
+  changexlabels + ylab ("Percentage of Targets Responded Correctly (%)")
+
+p_ace <- ggplot(data=SummaryMeasures, aes(y=proportionalcounterror, x=factor(targetnumber), fill = factor(targetnumber))) + 
+  geom_boxplot(outlier.size = 1) +
+  addscale +
+  theme_transition +
+  changexlabels + ylab ("Average proportional error in estimated count")
+
+legend <- get_legend(p_rt)
+p <- plot_grid(p_rt + theme(legend.position="none"), 
+               p_pc + theme(legend.position="none"), 
+               p_ace + theme(legend.position="none"),
+               labels = c("A", "B","C"), nrow=1)
+p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+show(p_legend)
 
 ```
  
+Fig 2 shows that people respond differently to each Cognitive Load condition. Participants react slower to heard target letters if they are listening for three targets as compared to one target (Fig 2A). Participants rarely make mistakes (i.e. responding to a distractor letter or not responding to a target letter) in the Easy Cognitive Load condition, they make more mistakes in the hard Cognitive Load condition (Fig 2B). 
+ 
+The interpretation of the last measure, the count error (Fig 2C), is more nuanced. Assessing accuracy of estimated counts is tricky because the amount of occurences of each target in the _Hard_ condition is generally a third of the count of the target in the _Easy_ condition. It is worth noting that the total error (cumulative across multiple targets) is pretty identical across both conditions. How you use then use this total count error to take into account people are responding to more targets _Hard_ than _Easy_ is the debateable bit. For example, estimating five instead of six has the same total error as estimating zero, two, three, for target counts of one, two and three. Yet one could argue that the two responses are qualitatively different because in the second case the participant has entirely missed a target but got the other two spot on. To reflect this I've chosen to express this measure as a proportional of the total amount of targets heard (Fig 2C). In any case, people are only marginally less accurate on this measure in the _Hard_ cognitive load than for _Easy_. It seems that the more precise measures of RT and PC are better indicators of differences in performance.
+
+Therefore, a quick eyeball of the baseline cognitive task performance suggests that people reacted slower and experienced greater difficulty in deciding the appropriate response when there were three targets as compared to when there was only one.
+
+Let's see how this gets reflected in steering measures.
+
 ### Steering.
 
 ### Gaze
