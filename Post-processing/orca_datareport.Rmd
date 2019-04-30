@@ -70,7 +70,7 @@ This means that we only have a small amount of data to work with, and the amount
 
 
 
-```{r data logging, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. A) Amount of trials in each condition"}
+```{r data logging, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. Amount of trials in each condition"}
 
 steergaze_trial <- steergazedata  %>% 
   group_by(ppid, radius, yawrate_offset, cogload, block, count, .drop = F) %>% 
@@ -112,6 +112,153 @@ Fig 1 shows that for the distraction conditions we only have 20-30 % of the expe
 ### Cognitive Load difficulty.
 
  - baseline differences in reaction time and % correct. 
+
+```{r load cognitive task data, echo=FALSE, message=FALSE, warning=FALSE}
+
+file_path <- "D:/ORCA_DATA/Data" #filepath (~ means to look in user's working directory)
+file_lists <- list(list.files(file_path, pattern = "Orca18_Distractor_1_(p|P)"),
+                   list.files(file_path, pattern = "Orca18_Distractor_2_(p|P)")) #separate into two blocks so I can loop through.
+EoT <- "EndofTrial" #text at end of EndofTrial files. These are the recorded counts at the end of the trial.
+WiT <- "WithinTrial" #text at end of WithinTrial files. These are the RT responses within a trial. 
+
+block = 0
+
+#assign dataframes
+
+EoT_dataframe <- data.frame(X=integer(),
+                 ppid=character(), 
+                 targetoccurence=double(), 
+                 targetnumber=integer(),
+                 trialn = integer(),
+                 EoTScore1 = double(),
+                 TargetCount1 = double(),
+                 EoTScore2 = double(),
+                 TargetCount2 = double(),
+                 EoTScore3 = double(),
+                 TargetCount3 = double(),
+                 block = integer())
+
+WiT_dataframe <- data.frame(X=integer(),
+                 ppid=character(), 
+                 targetoccurence=double(), 
+                 targetnumber=integer(),
+                 trialn = integer(),
+                 CurrentAudio = character(),
+                 RT = double(),
+                 ResponseCategory = integer(),
+                 Target1 = character(),
+                 Target2 = character(),
+                 Target3 = character(),
+                 block = integer())
+
+
+
+for (file_block in file_lists){ #loop through  each block so you can add a block number and add 6 to trial number.
+  
+  #we want to add 6 to the second block trialn.
+  block = block + 1
+  if (block == 1){
+    trial_add = 0
+  } else {
+    trial_add = 6
+  }
+  
+  for (file_name in file_block){
+    
+    print(file_name)
+    
+    #separate dataframe if EoT or WiT
+    
+    if (grepl(EoT, file_name)){
+    
+      EoT_newdata <- read.csv(paste(file_path,'/',file_name, sep = "")) #if already exists add to data frame.
+      
+      head(EoT_newdata)
+      
+      EoT_newdata <- EoT_newdata %>% 
+        mutate(trialn = trialn + trial_add,
+               block = block)
+      
+      EoT_dataframe <- dplyr::union(EoT_newdata, EoT_dataframe) #add to existing datframe  
+        
+            
+    } else if  (grepl(WiT, file_name)) {
+      WiT_newdata <- read.csv(paste(file_path,'/',file_name, sep = "")) #load WithinTrial data
+      
+      WiT_newdata <- WiT_newdata %>% 
+        mutate(trialn = trialn + trial_add,
+               block = block)
+      
+      WiT_dataframe <- dplyr::union(WiT_newdata, WiT_dataframe) #add to existing datframe  
+        
+    }
+  }
+}
+
+#head(EoT_dataframe) #view start of dataframe.
+#head(WiT_dataframe) #view start of dataframe.
+
+```
+
+
+Now we have loaded the cognitive load data, let's crunch the numbers.
+
+```{r calculate measures, echo=FALSE, message=FALSE, warning=FALSE}
+  
+##### WITHIN TRIAL MEASURES ########
+
+
+WiT_RTfiltered <- filter(WiT_dataframe, RT == -1 | RT >.1) # Returns dataframe for rows where RT was >.1 or -1 (no response) 
+
+WiT_TruePos <- filter(WiT_RTfiltered, ResponseCategory == 1) #create new dataframe only including true positives
+  
+SummaryRTs <- WiT_TruePos %>% group_by(ppid, trialn) %>% summarise(
+  targetnumber = first(targetnumber),
+  targetoccurence = first(targetoccurence),
+  meanRT = mean(RT),
+  stdRT = sd(RT))
+
+SummaryCounts <- mutate(SummaryCounts, Perc_Correct = (TruePos + TrueNeg)/ TotalResponses)
+
+
+####### END OF TRIAL MEASURES ########
+  
+#First, replace NA with Zeros for the following code to work. This means I can use the same code on all trials, even though some may have different amounts of targets.
+EoT_dataframe[is.na(EoT_dataframe)] <- 0
+
+#Calculate the error for each target.
+EoT_dataframe <- mutate(EoT_dataframe, 
+                        Error1 = EoTScore1 - TargetCount1,
+                        Error2 = EoTScore2 - TargetCount2,
+                        Error3 = EoTScore3 - TargetCount3)
+
+#Calculate the total absolute error and divide by targetnumber
+EoT_dataframe <- mutate(EoT_dataframe, AvgCountError = (abs(Error1) + abs(Error2) + abs(Error3)) / targetnumber)
+
+
+
+########### MERGE DATAFRAMES ############
+
+#merges dataframes for trial measures
+SummaryTrialMeasures <- merge(SummaryCounts, SummaryRTs, by = c("ppid","trialn"), all.x = TRUE)
+
+#only select the columns we are interested in 
+EoT_avgerror <- select(EoT_dataframe, ppid, trialn, targetnumber, targetoccurence, AvgCountError)
+
+#merge within trial and EoT measures together
+SummaryMeasures <- merge(SummaryTrialMeasures, EoT_avgerror, by = c("ppid","trialn"))
+
+#drop some extra columns created by merging for some unimportant reasons
+SummaryMeasures <- select(SummaryMeasures, -targetoccurence.x, -targetnumber.x, -targetoccurence.y, -targetnumber.y)
+
+```
+
+```{r plotting for informal hypothesis exploration, echo=FALSE, message=FALSE, warning=FALSE}
+
+#plot comparison to assess whether people respond differently to the two cognitive tasks when not driving.
+
+
+```
  
 ### Steering.
 
