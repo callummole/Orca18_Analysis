@@ -1,0 +1,189 @@
+---
+title: "Determining Cognitive Load difficulty - Pilot Analysis"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+This is a short script that combines the pilot data files and saves a CSV that you can plot with.
+
+## Loading the Data 
+
+First, we want to add the files into one big data frame. For each participant we have two files. One 'EndofTrial' file that records counts, and one 'WithinTrial' file that records responses to stimuli.
+
+
+```{r, echo=TRUE, message=FALSE}
+
+library("tidyverse") #load code libraries for analysis
+
+FilePath <- "D:\ORCA_DATA\Data" #filepath (~ means to look in user's working directory)
+Exp_ID <- "Orca18_Pilot_" #experiment code that gets prepended to any data file.
+EoT <- "_EndofTrial.csv" #text at end of EndofTrial files
+WiT <- "_WithinTrial.csv" #text at end of WithinTrial files
+PPs <- 1:3 #vector of participant codes
+
+for (pp in PPs){ #this for loop will loop through our participant vector
+  filename_EoT = paste(FilePath,Exp_ID, pp, EoT, sep="") #creates a string from our variables
+  filename_WiT = paste(FilePath,Exp_ID, pp, WiT, sep="") #creates a string from our variables
+  
+  if (pp == 1){ #if it is the first participant, create a new data frame.
+    
+    EoT_dataframe <- read.csv(filename_EoT) #load data
+    WiT_dataframe <- read.csv(filename_WiT)
+    
+  } else{ #if it isn't the first participant, add loaded files to existing data frame
+    EoT_newdata <- read.csv(filename_EoT) #load data
+    WiT_newdata <- read.csv(filename_WiT)
+    
+    EoT_dataframe <- rbind(EoT_newdata, EoT_dataframe) #add to existing datframe  
+    WiT_dataframe <- rbind(WiT_newdata, WiT_dataframe) #add to existing datframe 
+  }
+}
+
+head(EoT_dataframe) #view start of dataframe.
+head(WiT_dataframe) #view start of dataframe.
+
+```
+
+You can see that we have two data frames. 
+
+The first, __EoT_dataframe__ has 12 columns. Each row is a trial (_trialn_) . The first column _X_ is the data frame index so each row has a unique identifier. The next four columns (_ppid, targetoccurence, targetnumber, trialn_) contains all the information necessary for that particular trial. The last three rows (_EoTScore1, TargetCount1...EoTScore3, TargetCount3_) contains the user inputted scores, and the actual target counts for each target. NA is inputted to any cells of trials that had fewer targets than three. 
+
+The second dataframe, __WiT_dataframe__, also has 12 columns. Here each row is a stimulus presentation. The first five columns are the same as __EoT_dataframe__. _CurrentAudio_ is the heard stimulus. _RT_ is the response time (-1 if not responded). _ResponseCategory_ is a code for how appropriate the response is: 1 = true positive, 2 = false negative, 3 = false positive, 4 =  true negative. _Target1...Target3_ indicates the actual targets for that trial. 
+
+Let's save these files so we don't have to load them again.
+```{r}
+write.csv(EoT_dataframe, "Pilot_Data/Orca18_Pilot_EndofTrial_ALLPPs.csv")
+write.csv(WiT_dataframe, "Pilot_Data/Orca18_Pilot_WithinTrial_ALLPPs.csv")
+```
+
+
+## Calculating Measures
+
+The dataframes now hold all the data needed for calculating measures for each trial.
+
+The experiment design allows many ways to capture performance. There are three obvious ways of measures performance: the speed of response, whether the participant responded appropriately, and how far off they were in their recorded target counts.
+
+From the __WiT_dataframe__ the following measures need to be calculated:   
+1. MeanRT_TruePos (MeanRT for True Positives)   
+2. StdRT_TruePos (Standard deviation of RT for True Positives)   
+3. Perc_Correct (True Positives and True Negatives)   
+
+First, we want to remove any RTs that are unfeasibly quick, since they are probably responding to the previously head stimuli. Based on Luce (1986), this value is set at 100ms.
+
+```{r}
+WiT_RTfiltered <- filter(WiT_dataframe, RT == -1 | RT >.1) # Returns dataframe for rows where RT was >.1 or -1 (no response) 
+```
+
+To calculate the RT measures, only the True Positives should be selected. In R, using the _tidyverse piping syntax_ (https://style.tidyverse.org/pipes.html), we can use ```group_by()``` and ```summarise()``` to calculate the mean and standard deviation of a particular trial's RTs.
+
+```{r}
+  
+WiT_TruePos <- filter(WiT_RTfiltered, ResponseCategory == 1) #create new dataframe only including true positives
+  
+SummaryRTs <- WiT_TruePos %>% group_by(ppid, trialn) %>% summarise(
+  targetnumber = first(targetnumber),
+  targetoccurence = first(targetoccurence),
+  meanRT = mean(RT),
+  stdRT = sd(RT))
+
+head(SummaryRTs) #view start of dataframe. For every participant and trial there will be a meanRT and a stdRT. stdRT is sometimes NA when there is only one True Positive for that trial. The trial will be missing if there are no True Positives for that trial. 
+
+```
+
+All the response categories are needed for calculating Perc_Correct, not just the True Positives.
+
+```{r}
+
+#Calculate the amount of each type of responses
+SummaryCounts <- WiT_RTfiltered %>% group_by(ppid, trialn) %>% summarise(
+  targetnumber = first(targetnumber),
+  targetoccurence = first(targetoccurence),
+  TruePos = sum(ResponseCategory==1),
+  FalseNeg = sum(ResponseCategory==2), 
+  FalsePos = sum(ResponseCategory==3),
+  TrueNeg = sum(ResponseCategory==4), 
+  TotalResponses=n())
+
+#add an extra column with Perc_Correct.
+SummaryCounts <- mutate(SummaryCounts, Perc_Correct = (TruePos + TrueNeg)/ TotalResponses)
+```
+
+
+But we still haven't dealt with the end of trial counts.
+
+From __EoT_dataframe__ we want to calculate how far off the actual target count the participant was. To do this the average absolute error will be calculated, across targets, for each trial.
+
+```{r}
+
+#First, replace NA with Zeros for the following code to work. This means I can use the same code on all trials, even though some may have different amounts of targets.
+EoT_dataframe[is.na(EoT_dataframe)] <- 0
+
+#Calculate the error for each target.
+EoT_dataframe <- mutate(EoT_dataframe, 
+                        Error1 = EoTScore1 - TargetCount1,
+                        Error2 = EoTScore2 - TargetCount2,
+                        Error3 = EoTScore3 - TargetCount3)
+
+#Calculate the total absolute error and divide by targetnumber
+EoT_dataframe <- mutate(EoT_dataframe, AvgCountError = (abs(Error1) + abs(Error2) + abs(Error3)) / targetnumber)
+
+head(EoT_dataframe)
+
+```
+
+
+Now all the measures have been calculated for each trial, the dataframes can be and saved.
+
+```{r}
+  
+  #merges dataframes for trial measures
+  SummaryTrialMeasures <- merge(SummaryCounts, SummaryRTs, by = c("ppid","trialn"), all.x = TRUE)
+  
+  #only select the columns we are interested in 
+  EoT_avgerror <- select(EoT_dataframe, ppid, trialn, targetnumber, targetoccurence, AvgCountError)
+  
+  #merge within trial and EoT measures together
+  SummaryMeasures <- merge(SummaryTrialMeasures, EoT_avgerror, by = c("ppid","trialn"))
+  
+  #drop some extra columns created by merging for some unimportant reasons
+  SummaryMeasures <- select(SummaryMeasures, -targetoccurence.x, -targetnumber.x, -targetoccurence.y, -targetnumber.y)
+
+head(SummaryMeasures)
+
+write.csv(SummaryMeasures, "Orca18_Pilot_SummaryMeasures.csv")
+```
+
+
+You can either load up SummaryTrialMeasures.csv into excel and play around with them there. Or continue reading for an example of how to plot things in R.
+
+## Plotting in R
+
+The best way of plotting data in R is using ggplot. ggplot is a package that was loaded in the ``` library("tidyverse")``` command. Below is a quick example of an effective plot. To find out how to do different plots, google is your friend!
+
+```{r, message=FALSE, fig.width=5,fig.height=3.5}
+#for plotting turn targetnumber and targetoccurence into factors
+SummaryMeasures$targetnumber <- factor(SummaryMeasures$targetnumber)
+SummaryMeasures$targetoccurence <- factor(SummaryMeasures$targetoccurence)
+
+#Example 1: plot RTs for each targetnumber
+ggplot(data=SummaryMeasures, aes(y=meanRT, x=targetnumber)) + geom_point()
+
+#Example 2: plot RTs for each targetoccurence. This time we are going to spread the dots a little.
+ggplot(data=SummaryMeasures, aes(y=meanRT, x=targetoccurence)) + geom_jitter(width=.1)
+
+#Example 3: colour them by participant
+ggplot(data=SummaryMeasures, aes(y=meanRT, x=targetoccurence, color=factor(ppid))) + geom_jitter(width=.1)
+
+#Example 4: get participant averages, but carry over important factors.
+ParticipantAverages <- SummaryMeasures %>% group_by(ppid, targetnumber, targetoccurence) %>% summarise(meanRT = mean(meanRT), stdRT = mean(stdRT), counterror = mean(AvgCountError))
+
+#plot participant averages for meanRT. with targetoccurence and number as factors
+ggplot(data=ParticipantAverages, aes(y=meanRT, x=targetoccurence, color=factor(targetnumber))) + geom_jitter(width=.1, alpha = .2) + stat_summary(fun.y = "mean", geom="point", size=4)
+  
+
+```
+
+Note that these are quick and dirty simple examples, and may not be the best way to display the data. They are just examples of the sorts of things you can do in R, with ggplot. 
