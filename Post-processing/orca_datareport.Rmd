@@ -60,7 +60,8 @@ loadsteergazedata <- function(){
   mutate(world_x_mirrored = if_else(bend == "left", World_x * -1, World_x),
          hangle_mirrored = if_else(bend == "left", hangle * -1, hangle),
          SWA_mirrored = if_else(bend == "left", SWA * -1, SWA),
-         SWV_mirrored = if_else(bend == "left", SWV * -1, SWV))
+         SWV_mirrored = if_else(bend == "left", SWV * -1, SWV),
+         SB_mirrored = if_else(bend == "left", SteeringBias * -1, SteeringBias))
 
   steergazedata$ppid <- as.factor(steergazedata$ppid)
   steergazedata$radius <- as.factor(steergazedata$radius)
@@ -508,7 +509,7 @@ Average Steering wheel velocity over time.
 
 
 
-```{r filtering takeover trials, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5,fig.height=5,fig.cap="Fig 5. A) Average trajectories, B) Shown as steering bias"}
+```{r filtering takeover trials, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10,fig.height=10,fig.cap="Fig 5. A) Average trajectories, B) Shown as steering bias"}
 
 #can use AutoFlag to select manual control periods.
 
@@ -613,9 +614,9 @@ head(steergaze_manual_rotated_40)
 steergaze_manual_rotated_40 <- steergaze_manual_rotated %>% 
   filter(radius == 40)
 
-p_40 <- ggplot(data = steergaze_manual_rotated_40, aes(x = world_x_rotate, y= world_z_rotate, col = factor(failure_type))) +
+p_40 <- ggplot(data = filter(steergaze_manual_rotated_40, failure_type == "Sudden"), aes(x = world_x_rotate, y= world_z_rotate, col = factor(cogload))) +
   geom_path(aes(group = trialid), alpha = .3) +
-  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
   geom_path(data = track_40, aes(x = midlinex, y=midlinez), colour = "grey", linetype = "dashed") +
   geom_path(data = track_40, aes(x = outsidex, y=outsidez), colour = "grey") +
   geom_path(data = track_40, aes(x = insidex, y=insidez), colour = "grey") +
@@ -634,8 +635,77 @@ p_raw +
   geom_path(data = rotate_mytrial, aes(x = world_x_rotate, y=world_z_rotate), colour = "red") 
 
 show(p_raw)
-  
 
+#need to figure out what's going on in the trajectories where the behaviour is very different.
+
+#plot everything.
+
+
+
+steergaze_40 <- steergazedata %>% 
+  filter(radius == 40)
+
+head(steergaze_manual)
+#takeover coordinates:
+takeover_state <- steergaze_manual %>%
+  group_by(trialid) %>% 
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = SB_mirrored[1] - SB_mirrored[2],
+            ttlc = (1.5 - abs(sb_mirrored)) / (abs(sb_change)*60),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = time - onset,
+            bend = first(bend),
+            ppid = first(ppid))
+
+p_all_40 <- ggplot(data = steergaze_40, aes(x = world_x_mirrored, y= World_z)) +
+  geom_path(aes(group = trialid), alpha = .3) +
+  #scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_path(data = track_40, aes(x = midlinex, y=midlinez), colour = "grey", linetype = "dashed") +
+  geom_path(data = track_40, aes(x = outsidex, y=outsidez), colour = "grey") +
+  geom_path(data = track_40, aes(x = insidex, y=insidez), colour = "grey") +
+  xlim(c(min(track_40$outsidex), max(steergaze_manual_rotated_40$world_x_rotate))) +
+  geom_point(data = filter(takeover_state, rads == 40), aes(x=x, y=z), col="red", alpha = .5)
+  #ylim(c(16,60))
+
+show(p_all_40)
+
+#plot the takeover state
+
+#first, sb by failure type
+ggplot(data = takeover_state, aes(x = sb_mirrored, group = factor(failure_type), fill = factor(failure_type))) +
+         geom_density(alpha = .8) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") 
+       
+
+ggplot(data = takeover_state, aes(x = sb_mirrored, y = RT, col = factor(failure_type))) +
+         geom_point(alpha = .8) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  geom_vline(xintercept = c(-1.5,1.5), linetype = "dashed", col = "grey")
+
+print(takeover_state$ttlc)
+
+
+ggplot(data = filter(takeover_state, ttlc < 10), aes(x =ttlc, group = factor(failure_type), fill = factor(failure_type))) +
+         geom_density(alpha = .8) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")
+
+ggplot(data = filter(takeover_state, ttlc < 10, failure_type == "Sudden"), aes(x =ttlc, group = factor(cogload), fill = factor(cogload))) +
+         geom_density(alpha = .8) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Failure Type")
+
+ggplot(data = filter(takeover_state, ttlc < 10, failure_type == "Gradual"), aes(x =ttlc, group = factor(cogload), fill = factor(cogload))) +
+         geom_density(alpha = .8) +
+  facet_wrap(~ppid) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Failure Type") +
+  ylim(c(0,5))
+  
 ```
 
 
