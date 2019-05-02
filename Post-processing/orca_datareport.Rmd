@@ -45,19 +45,45 @@ theme_transition <- theme_classic() +
 setwd("C:/Users/psccmo/Orca18_Analysis/Post-Processing/")
 
 #load steergaze data
-steergazedata <- readRDS("orca_steergazedata.rds")
 
-#add left bend
-steergazedata <- steergazedata %>% 
+loadsteergazedata <- function(){
+  steergazedata <- readRDS("orca_steergazedata.rds")  
+  
+  steergazedata <- steergazedata %>% 
   mutate(bend = ifelse(trialtype_signed < 0, "left", "right"))
-
-steergazedata[steergazedata$bend == "left", "hangle"] <- steergazedata[steergazedata$bend == "left", "hangle"]*-1 
-
-
-
-steergazedata <- steergazedata %>% 
+  
+  steergazedata <- steergazedata %>% 
   rename(SWV = SWA) %>% 
   mutate(SWA = SWV * 90)
+
+  steergazedata <- steergazedata %>% 
+  mutate(world_x_mirrored = if_else(bend == "left", World_x * -1, World_x),
+         hangle_mirrored = if_else(bend == "left", hangle * -1, hangle),
+         SWA_mirrored = if_else(bend == "left", SWA * -1, SWA),
+         SWV_mirrored = if_else(bend == "left", SWV * -1, SWV))
+
+  steergazedata$ppid <- as.factor(steergazedata$ppid)
+  steergazedata$radius <- as.factor(steergazedata$radius)
+  steergazedata$yawrate_offset <- as.factor(steergazedata$yawrate_offset)
+  steergazedata$cogload <- as.factor(steergazedata$cogload)
+    
+  #create new column called failure type.
+  steergazedata <- steergazedata %>% 
+  mutate(failure_type = yawrate_offset)
+
+  
+  #refactor.
+  levels(steergazedata$failure_type)[1] = "Sudden"
+  levels(steergazedata$failure_type)[2] = "Gradual"
+  levels(steergazedata$failure_type)[3] = "None"
+  levels(steergazedata$failure_type)[4] = "None"
+
+
+  return(steergazedata)
+}
+
+steergazedata <- loadsteergazedata()
+
 
 ```
 
@@ -316,9 +342,9 @@ Therefore, a quick eyeball of the baseline cognitive task performance suggests t
 
 Let's see how this gets reflected in steering measures.
 
-### Steering.
+### Driver Takeover.
 
-The pre-registration specifies two steering related hypotheses:
+The pre-registration specifies two hypotheses relating to taking over control of the vehicle:
 
 -	__H1__: Participants will react slower to silent failures as cognitive load increases (i.e. more time will elapsed from the yaw rate offset to the driver disengaging the automation).
 
@@ -347,19 +373,8 @@ Future plots:
 ### need to calculate RTs.
 if (!exists("steergazedata")){
   #load steergaze data
-  steergazedata <- readRDS("orca_steergazedata.rds")
+  steergazedata <- loadsteergazedata()
   
-  #add left bend
-  steergazedata <- steergazedata %>% 
-    mutate(bend = ifelse(trialtype_signed < 0, "left", "right"))
-  
-  steergazedata[steergazedata$bend == "left", "hangle"] <- steergazedata[steergazedata$bend == "left", "hangle"]*-1 
-  
-  
-  
-  steergazedata <- steergazedata %>% 
-    rename(SWV = SWA) %>% 
-    mutate(SWA = SWV * 90)
 }
 
 #create function retrieving RT-takeover.
@@ -419,7 +434,7 @@ ggplot(steergaze_trialavgs, aes(x = RT, group = factor(failure_type), fill = fac
 
 ```
 
-Fig 3 shows massive differences in how quickly drivers disengage the automation after the yawrate onset. In the _None_ condition drivers disengaged the system in `r as.double(disengage_perc) * 100` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
+Fig 3 shows massive differences in how quickly drivers disengage the automation after the yawrate onset. In the _None_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
 
 ```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. RT takeover across cognitive loads"}
 
@@ -472,8 +487,157 @@ Fig 4 shows cognitive load differences in RT~takeover~ within failure type. For 
 
 __H1 Summary__: of course this needs inferential statistics to support my eyeballing, but I will tentatively suggest that reaction time to silent failures does indeed increase as cognitive load increases, though this effect depends on the severity of the failure.
 
+```{r modelling RT, echo=FALSE, message=FALSE, warning=FALSE}
 
-#### 
+
+
+```
+
+#### H2: Steering Response
+
+Here we analyse the driver response after taking over control. First, we will plot some average trajectories. 
+
+<!-- First off:
+
+Filter out trials where the participant took over.
+Average trajectory plots.
+Average steering bias over time.
+Average Steering wheel velocity over time.
+
+-->
+
+
+
+```{r filtering takeover trials, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5,fig.height=5,fig.cap="Fig 5. A) Average trajectories, B) Shown as steering bias"}
+
+#can use AutoFlag to select manual control periods.
+
+#add trialid to frame by frame dataset because the current one doesn't include enough unique information
+steergazedata <- steergazedata %>% 
+  mutate(trialid = paste(ppid, radius, yawrate_offset, cogload, block, count, sep = "_"))
+
+
+#only select the trials with manual control in them.
+steergaze_manual <- steergazedata %>% 
+  filter(AutoFlag == FALSE)
+
+### Reset trial so they all start at around [0,0] 
+steergaze_manual <- steergaze_manual %>% 
+  ungroup() %>% 
+  group_by(trialid) %>%
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+#create trial list for sample one trial
+triallist <- steergaze_manual %>% 
+  ungroup() %$% 
+  unique(trialid) 
+
+
+head(steergaze_manual)
+
+
+########### NEED TO ROTATE AROUND START OF BEND #########
+
+#create function that takes an x and z and rotates it back to origin.
+resettrajectory <- function(df){
+  
+  #X,z should be vectors of positions in the world.
+  #first_yaw should be the world orientation of the first frame of the trajectory
+  #first_sb should be the steering bias of the first frame.
+  #rotate round origin.
+  #the origin of the bend is +rads, +16 m
+  
+  x = df$world_x_mirrored
+  z = df$World_z
+  rads = first(df$radii)
+  failure_type = df$failure_type[1]
+  cogload = df$cogload[1]
+  
+  bend_origin_x = rads
+  bend_origin_z = 16
+  
+  
+  #z = z - bend_start
+  #x = x - rads
+  #first retrieve the angle between world_x and world_z and the abscissa, relative to the origin. 
+
+  x = x - bend_origin_x
+  z = z - bend_origin_z
+ 
+  x1 = first(x)
+  z1= first(z)
+  
+  
+  length_from_bend_origin = sqrt( (x1)^2 + (z1 )^2 )   #b
+  length_from_bend_start = sqrt( (x1 - -bend_origin_x) ^2 + (z1 )^2 ) #c
+  
+  #print(length_from_bend_origin)
+  #print(length_from_bend_start)
+  
+  #use cosine rule to find rotation angle
+  numerator = (length_from_bend_origin^2 + rads^2 - length_from_bend_start^2)
+  denominator =  2 * length_from_bend_origin * rads
+  rotation_angle = acos(  numerator / denominator )
+
+  x_rotate <- cos(rotation_angle) * (x ) - 
+    sin(rotation_angle) * (z) 
+  z_rotate <- sin(rotation_angle) * (x) + 
+    cos(rotation_angle) * (z) 
+  
+  #reset to zero, but conserve steering bias offset. The other way of doing this would be to minus the closest point.
+  x_rotate <- x_rotate + bend_origin_x
+  z_rotate <- z_rotate + bend_origin_z 
+  
+  ret <- data_frame(world_x_rotate = x_rotate,
+             world_z_rotate = z_rotate,
+             radius = rads,
+             failure_type = failure_type,
+             cogload = cogload)
+  
+  return(ret)
+
+}
+
+
+#load track data
+track_80 <- read.csv("track_with_edges_orca_80.csv")
+track_40 <- read.csv("track_with_edges_orca_40.csv")
+
+steergaze_manual_rotated <- steergaze_manual %>% 
+  group_by(trialid) %>% 
+  do(resettrajectory(.))
+
+head(steergaze_manual_rotated_40)
+
+steergaze_manual_rotated_40 <- steergaze_manual_rotated %>% 
+  filter(radius == 40)
+
+p_40 <- ggplot(data = steergaze_manual_rotated_40, aes(x = world_x_rotate, y= world_z_rotate, col = factor(failure_type))) +
+  geom_path(aes(group = trialid), alpha = .3) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  geom_path(data = track_40, aes(x = midlinex, y=midlinez), colour = "grey", linetype = "dashed") +
+  geom_path(data = track_40, aes(x = outsidex, y=outsidez), colour = "grey") +
+  geom_path(data = track_40, aes(x = insidex, y=insidez), colour = "grey") +
+  xlim(c(min(track_40$outsidex), max(steergaze_manual_rotated_40$world_x_rotate))) +
+  ylim(c(16,60))
+
+show(p_40)
+
+head(mytrial)
+#now try to rotate it
+steergaze_manual_rotated <- mytrial %>% 
+  group(trialid) %>% 
+  do(resettrajectory(.$world_x_mirrored, .$World_z, first(.$WorldYaw), first(.$SteeringBias), first(.$radii)))
+
+p_raw + 
+  geom_path(data = rotate_mytrial, aes(x = world_x_rotate, y=world_z_rotate), colour = "red") 
+
+show(p_raw)
+  
+
+```
+
 
 ### Gaze
 
@@ -490,4 +654,7 @@ __H1 Summary__: of course this needs inferential statistics to support my eyebal
 Future Analysis:
 - Are any of the variables affected by onset time?
 - Are any of the variables affected by which automated trajectory is being played? 
+
+- Plot the distribution of when they took over in the trial.
+- And also the x z position of when they took over.
 -->
