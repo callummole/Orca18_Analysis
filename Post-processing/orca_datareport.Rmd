@@ -1,5 +1,5 @@
 ---
-title: 'Silent Failures in Automation. Pilot dataset Calculating Measures and Descriptive Plotting'
+title: 'Silent Failures in Automation. Pilot dataset descriptive plotting and re-design recommendations'
 author: "Callum Mole"
 output:
   html_document:
@@ -14,7 +14,7 @@ output:
 
 ## Introduction
 
-This document serves as a report for a first run of the pre-registered experiment https://osf.io/s6vam/. The experiment examines silent failures in a highly controlled setting. Each trial starts with automated steering. In some trials a bias is introduced that causes the vehicle to veer off the road either suddenly (within 1.5 s) or gradually (~ 4 s). Participants are required to keep within the road edges and intervene if they feel that it is necessary. They complete the task without distraction or with a easy or difficult distraction. There are also two bend radii used: sharp (40 m) or gradual (80 m).
+This document is a report for on the pre-registered experiment https://osf.io/s6vam/. The experiment examined silent failures in a highly controlled setting. Each trial starts with automated steering. In some trials a bias is introduced that causes the vehicle to veer off the road either suddenly (within 1.5 s) or gradually (~ 4 s). The bias is to yaw-rate, so introduces error by causing the vehicle to understeer or oversteer. Effectively, the manipulation biases the mapping between steering angle - which does not change - and yaw-rate, which does change. Therefore we will henceforth call this error _Steering Angle Bias_ (SAB). Participants are required to keep within the road edges and intervene if they feel that it is necessary. They complete the task without distraction or with a easy or difficult distraction. There are also two bend radii used: sharp (40 m) or gradual (80 m).
 
 ```{r Load preliminaries, include=FALSE, warning=FALSE}
 
@@ -126,7 +126,7 @@ steergazedata <- loadsteergazedata()
 
 ### Technical Errors
 
-This experiment stands as a lesson for the need to conduct a full technical pilot - running a participant through the entire experiment then putting that data through the entire analysis workflow. Due to time pressures we often do _some_ piloting to ostensibly check data saving, condition indexing etc. But we do not very often take the time to process the data through analysis scripts. In this case the data looked like it was saving correctly when piloting. But there were two key errors. First, the distraction performance files were overwritten when the driver was also steering (we still have the baseline - no steering - distraction performance files). Secondly, the "unique" filename for saving individual trials did not include the yawrate offsets in the title. So, in effect these trials were overwritten and only the last six (randomised) trials were saved for each radii, irrespective of yawrates offsets.
+This experiment stands as a lesson for the need to conduct a full technical pilot - running a participant through the entire experiment then putting that data through the entire analysis workflow. Due to time pressures we often do _some_ piloting to ostensibly check data saving, condition indexing etc. But we do not very often take the time to process the data through analysis scripts. In this case the data looked like it was saving correctly when piloting. But there were two key errors. First, the distraction performance files were overwritten when the driver was also steering (we still have the baseline - no steering - distraction performance files). Secondly, the "unique" filename for saving individual trials did not include the steering angle bias in the title. So, in effect these trials were overwritten and only the last six (randomised) trials were saved for each radii, irrespective of SAB.
 
 This means that we only have a small amount of data to work with, and the amount of trials performed (or, to be more precise, saved) for each condition is random between conditions. Fig 1 shows how many trials we have. The expected trialcount for each condition is 180 trials in the dataset.
 
@@ -390,7 +390,7 @@ Let's see how this gets reflected in steering measures.
 
 The pre-registration specifies two hypotheses relating to taking over control of the vehicle:
 
--	__H1__: Participants will react slower to silent failures as cognitive load increases (i.e. more time will elapsed from the yaw rate offset to the driver disengaging the automation).
+-	__H1__: Participants will react slower to silent failures as cognitive load increases (i.e. more time will elapsed from the steering angle bias to the driver disengaging the automation).
 
 -	__H2__: Participants will react with less aggression as cognitive load increases, bringing the vehicle back to the centre more slowly (i.e. they will be smoother and make less corrections). 
 
@@ -400,9 +400,9 @@ These two hypotheses will be analysed in turn.
 
 The pre-registration states that we will calculate two measures:
 
-- RT from yawrate-drift onset to disengagement of the system via a button press (can be negative if they take over before the yaw-rate bias is introduced). I will refer to this measure as RT~takeover~.
+- RT from SAB onset to disengagement of the system via a button press (can be negative if they take over before the SAB is introduced). I will refer to this measure as RT~takeover~.
 
-- RT from yawrate-drift onset to first steering movement (RT~steer~).
+- RT from SAB onset to first steering movement (RT~steer~).
 
 For the purposes of a quick look at the pilot dataset I will only use RT~takeover~ for now.
 
@@ -459,7 +459,7 @@ ggplot(steergaze_trialavgs, aes(x = RT, group = factor(failure_type), fill = fac
 
 ```
 
-Fig 3 shows massive differences in how quickly drivers disengage the automation after the yawrate onset (using positive RTs only). In the _None_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
+Fig 3 shows massive differences in how quickly drivers disengage the automation after the SAB (using positive RTs only). In the _None_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
 
 ```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. RT takeover across cognitive loads"}
 
@@ -559,7 +559,7 @@ show(p_radius)
 
 #### H2: Steering Response
 
-Here we analyse the driver response after taking over control. Firstly we plot some trajectories to understand the constraints the driver is placed under. Remeber that there are 6 potential automation trajectories, with onset times of the yawrate-offset varying between 5 and 9. This variability makes for messy plots if plotting them all in cartesian space. Therefore, Fig 6 fixes the onset time (=5 s) and the bend radius (=40 m). You can see that the potential automation trajectories are all pretty similar. It is also clear that the _Sudden_ take-overs are tightly bunched compared to the _Gradual_ and _None_ (see Fig 4). _None_ is a misnomer because there is actually an offset introduced in these trials but the offset isn't large enough to leave the road. Therefore, participants might sense some drift in lane position, prompting them to take-over. Note that in the _Gradual_ panel there is one trial where the take-over happens before the yawrate-offset is introduced. This happens in `r round(as.double(premature_perc) * 100)` % of trials.
+Here we analyse the driver response after taking over control. Firstly we plot some trajectories to understand the constraints the driver is placed under. Remeber that there are 6 potential automation trajectories, with onset times of the SAB varying between 5 and 9. This variability makes for messy plots if plotting them all in cartesian space. Therefore, Fig 6 fixes the onset time (=5 s) and the bend radius (=40 m). You can see that the potential automation trajectories are all pretty similar. It is also clear that the _Sudden_ take-overs are tightly bunched compared to the _Gradual_ and _None_ (see Fig 4). _None_ is a misnomer because there is actually an offset introduced in these trials but the offset isn't large enough to leave the road. Therefore, participants might sense some drift in lane position, prompting them to take-over. Note that in the _Gradual_ panel there is one trial where the take-over happens before the SAB is introduced. This happens in `r round(as.double(premature_perc) * 100)` % of trials.
 
 <!-- Steering section plan:
 
