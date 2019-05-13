@@ -14,7 +14,17 @@ output:
 
 ## Introduction
 
-This document is a report for on the pre-registered experiment https://osf.io/s6vam/. The experiment examined silent failures in a highly controlled setting. Each trial starts with automated steering. In some trials a bias is introduced that causes the vehicle to veer off the road either suddenly (within 1.5 s) or gradually (~ 4 s). The bias is to yaw-rate, so introduces error by causing the vehicle to understeer or oversteer. Effectively, the manipulation biases the mapping between steering angle - which does not change - and yaw-rate, which does change. Therefore we will henceforth call this error _Steering Angle Bias_ (SAB). Participants are required to keep within the road edges and intervene if they feel that it is necessary. They complete the task without distraction or with a easy or difficult distraction. There are also two bend radii used: sharp (40 m) or gradual (80 m).
+This document is a report for on the pre-registered experiment https://osf.io/s6vam/. The experiment examined silent failures in a highly controlled setting. Each trial starts with automated steering. In some trials a bias is introduced that causes the vehicle to veer off the road either suddenly (within 1.5 s) or gradually (~ 4 s). Participants are required to keep within the road edges and intervene if they feel that it is necessary. They complete the steering task on two bend radii, sharp (40 m) or gradual (80 m), without distraction or with an easy or difficult distraction.
+
+#### Terminology
+
+- The bias is to yaw-rate, so introduces error by causing the vehicle to understeer or oversteer. Effectively, the manipulation biases the mapping between steering angle - which does not change - and yaw-rate, which does change. Therefore we will henceforth call this error _Steering Angle Bias_ (SAB).
+
+- SAB is introduced in _all_ trials, though in half the trials the SAB is not large enough to cause the vehicle to leave the road (though there will be some drift). It is confusing to call the 'stay on road' trials 'no failure' trial (or 'None' failure type). Instead, the levels of Failure Type will be _Sudden_ (rapidly drifts off road, requiring intervention), _Gradual_ (slowly drifts off road, requiring intervention), and _Benign_ (may experience some drift but it does not require intervention).
+
+- The different Cognitive Load levels will be _Hard_ (three targets), _Easy_ (one target), or _None_ (no heard letters).
+
+- Bend levels will be referred to by their radii, _40 m_ or _80 m_.
 
 ```{r Load preliminaries, include=FALSE, warning=FALSE}
 
@@ -83,8 +93,8 @@ loadsteergazedata <- function(){
   #refactor failure_type
   levels(steergazedata$failure_type)[1] = "Sudden"
   levels(steergazedata$failure_type)[2] = "Gradual"
-  levels(steergazedata$failure_type)[3] = "None"
-  levels(steergazedata$failure_type)[4] = "None"
+  levels(steergazedata$failure_type)[3] = "Benign"
+  levels(steergazedata$failure_type)[4] = "Benign"
   
   
   #add RT and disengage flag.
@@ -126,10 +136,9 @@ steergazedata <- loadsteergazedata()
 
 ### Technical Errors
 
-This experiment stands as a lesson for the need to conduct a full technical pilot - running a participant through the entire experiment then putting that data through the entire analysis workflow. Due to time pressures we often do _some_ piloting to ostensibly check data saving, condition indexing etc. But we do not very often take the time to process the data through analysis scripts. In this case the data looked like it was saving correctly when piloting. But there were two key errors. First, the distraction performance files were overwritten when the driver was also steering (we still have the baseline - no steering - distraction performance files). Secondly, the "unique" filename for saving individual trials did not include the steering angle bias in the title. So, in effect these trials were overwritten and only the last six (randomised) trials were saved for each radii, irrespective of SAB.
+This experiment stands as a lesson for the need to conduct a full technical pilot, running a participant through the entire experiment then putting that data through the entire analysis workflow. Due to time pressures we often do _some_ piloting to ostensibly check data saving, condition indexing etc. But we do not very often take the time to process the data through analysis scripts. Here there were two errors in the data saving. First, the distraction performance files were overwritten when the driver was also steering (we still have the baseline - no steering - distraction performance files). Secondly, the "unique" filename for saving individual trials did not include the steering angle bias in the title. So, in effect these trials were overwritten and only the last six (randomised) trials were saved for each radii, irrespective of SAB.
 
-This means that we only have a small amount of data to work with, and the amount of trials performed (or, to be more precise, saved) for each condition is random between conditions. Fig 1 shows how many trials we have. The expected trialcount for each condition is 180 trials in the dataset.
-
+This means we only have 20-30 % of the expected data (Fig 1). However, the amount of trials saved for each condition is random (for driving without distraction we have slightly more because there are two blocks), and 20-30% is still a reasonable chunk of trials (> 40 in each condition). So at the very least the reduced data set will be useful at tweaking the design for an improved re-run, and for developing the modelling architecture.
 
 
 ```{r data logging, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. Amount of trials in each condition"}
@@ -150,12 +159,12 @@ expected_trialcount <- 30 * 6 #30 participants x 6 trials in each condition.
 
 #change the yawrate_offsets to factors.
 steergaze_expanded_counts <- steergaze_expanded_counts %>% 
-  mutate(failure_type = case_when(yawrate_offset %in% c(-.2, .15) ~ "None",
+  mutate(failure_type = case_when(yawrate_offset %in% c(-.2, .15) ~ "Benign",
                                   yawrate_offset == -9 ~ "Sudden",
                                   yawrate_offset == -1.5 ~ "Gradual"))
 
 steergaze_expanded_counts$cogload <- factor(steergaze_expanded_counts$cogload, levels = c("None", "Easy", "Hard"))
-steergaze_expanded_counts$failure_type <- factor(steergaze_expanded_counts$failure_type, levels = c("Sudden", "Gradual", "None"))
+steergaze_expanded_counts$failure_type <- factor(steergaze_expanded_counts$failure_type, levels = c("Sudden", "Gradual", "Benign"))
 
 
 #plot counts.
@@ -170,7 +179,6 @@ ggplot(steergaze_expanded_counts, aes(y = n, x = factor(cogload), fill = factor(
 
 ```
 
-Fig 1 shows that for the distraction conditions we only have 20-30 % of the expected data. For driving without distraction we have slightly more because there are two blocks. For the trials we do have we have complete steering and gaze data, so at the very least the reduced data set will be useful at tweaking the design for an improved re-run, and for developing the modelling architecture.
 
 ### Cognitive Load difficulty.
 
@@ -337,7 +345,7 @@ SummaryMeasures <- select(SummaryMeasures, -targetoccurence.x, -targetnumber.x, 
 #head(SummaryMeasures)
 ```
 
-We only have the cognitive performance for baseline (without steering). Here we plot three indices of performance: _Percentage Correct_ (PC, True positives + True negatives / total letters heard); _Reaction Time_ (RT, reaction time for True positives); _Proportional Absolute Count Error_ (average distance from the true count, expressed as a proportion of the total amount of targets heard).
+We only have the cognitive performance for baseline (without steering). Here we plot three indices of performance to assess whether our levels of cognitive difficulty are reflected in performance measures: _Percentage Correct_ (PC, True positives + True negatives / total letters heard); _Reaction Time_ (RT, reaction time for True positives); _Proportional Absolute Count Error_ (average distance from the true count, expressed as a proportion of the total amount of targets heard).
 
 ```{r plot Cognitive Task Performance, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 2. Cognitive Task Performance. A) Percentage Correct. B) Reaction Time. C-D) Absolute Count Error"}
 
@@ -378,13 +386,13 @@ show(p_legend)
 
 ```
  
-Fig 2 shows that people respond differently to each Cognitive Load condition. Participants react slower to heard target letters if they are listening for three targets as compared to one target (Fig 2A). Participants rarely make mistakes (i.e. responding to a distractor letter or not responding to a target letter) in the Easy Cognitive Load condition, they make more mistakes in the hard Cognitive Load condition (Fig 2B). 
+Fig 2 shows that people respond differently to each Cognitive Load condition. Participants react slower to heard target letters if they are listening for three targets rather than only one target (Fig 2A). Participants rarely make mistakes (i.e. responding to a distractor letter or not responding to a target letter) in the _Easy_ Cognitive Load condition, they make more mistakes in the _Hard_ Cognitive Load condition (Fig 2B). 
  
-The interpretation of the last measure, the count error (Fig 2C), is more nuanced. Assessing accuracy of estimated counts is tricky because the amount of occurences of each target in the _Hard_ condition is generally a third of the count of the target in the _Easy_ condition. It is worth noting that the total error (cumulative across multiple targets) is pretty identical across both conditions. How you use then use this total count error to take into account people are responding to more targets _Hard_ than _Easy_ is the debateable bit. For example, estimating five instead of six has the same total error as estimating zero, two, three, for target counts of one, two and three. Yet one could argue that the two responses are qualitatively different because in the second case the participant has entirely missed a target but got the other two spot on. To reflect this I've chosen to express this measure as a proportional of the total amount of targets heard (Fig 2C). In any case, people are only marginally less accurate on this measure in the _Hard_ cognitive load than for _Easy_. It seems that the more precise measures of RT and PC are better indicators of differences in performance.
+The interpretation of the the count error (Fig 2C) is more nuanced. The total error (cumulative across all targets) is very similar across both conditions. How you use then use this total count error to take into account that people are responding to more targets in _Hard_ than _Easy_ is the debateable bit. For example, estimating five instead of six occurences (for one target) has the same total error as estimating zero, two, three, for target counts of one, two and three (for three targets). Yet one could argue that the two responses are qualitatively different because in the second case the participant has entirely missed a target but got the other two spot on. To reflect this I've chosen to express this measure as a proportional of the total amount of targets heard (Fig 2C). In any case, people are only marginally less accurate on this measure in the _Hard_ cognitive load than for _Easy_. It seems that the more precise measures of RT and PC are better indicators of differences in performance.
 
 Therefore, a quick eyeball of the baseline cognitive task performance suggests that people reacted slower and experienced greater difficulty in deciding the appropriate response when there were three targets as compared to when there was only one.
 
-Let's see how this gets reflected in steering measures.
+We will now see how this gets reflected in steering measures.
 
 ### Driver Takeover.
 
@@ -398,19 +406,14 @@ These two hypotheses will be analysed in turn.
 
 #### H1: Speed of take-over
 
-The pre-registration states that we will calculate two measures:
+The pre-registration states that two measures will be calculated:
 
 - RT from SAB onset to disengagement of the system via a button press (can be negative if they take over before the SAB is introduced). I will refer to this measure as RT~takeover~.
 
 - RT from SAB onset to first steering movement (RT~steer~).
 
-For the purposes of a quick look at the pilot dataset I will only use RT~takeover~ for now.
+For the purposes of a 'quick' look at the pilot dataset I will only use RT~takeover~ for now.
 
-<!-- 
-Future plots:
-- A birdseye plot showing the points at takeover and the subsequent trajectories would be illustrative. These would have to be reset to the same onset time  
-- scatter plot showing whether onset time and/or pre-recorded trajectory choice influenced reaction times.
--->
 
 ```{r calculate RT takeover measure, echo=FALSE, message=FALSE, warning=FALSE}
 
@@ -435,7 +438,7 @@ head(steergaze_trialavgs)
 #disengage %
 disengage_perc <- steergaze_trialavgs %>% 
   ungroup() %>% 
-  filter(failure_type == "None") %>% 
+  filter(failure_type == "Benign") %>% 
   summarise(pc = sum(disengaged) / n()) 
 
 #negative RT %
@@ -459,7 +462,7 @@ ggplot(steergaze_trialavgs, aes(x = RT, group = factor(failure_type), fill = fac
 
 ```
 
-Fig 3 shows massive differences in how quickly drivers disengage the automation after the SAB (using positive RTs only). In the _None_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
+Fig 3 shows massive differences in how quickly drivers disengage the automation after SAB onset (using positive RTs only). In the _Benign_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
 
 ```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. RT takeover across cognitive loads"}
 
@@ -488,7 +491,7 @@ p_gradual <- ggplot(filter(steergaze_trialavgs, failure_type == "Gradual"),
   theme_transition +
   xlab(expression("RT"["takeover"]*" (s)")) 
 
-p_none <- ggplot(filter(steergaze_trialavgs, failure_type == "None"), 
+p_benign <- ggplot(filter(steergaze_trialavgs, failure_type == "Benign"), 
                    aes(x = RT, group = factor(cogload), col = factor(cogload), fill = factor(cogload))) +
   geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
   geom_density(size = 1.2, fill = NA) +
@@ -503,7 +506,7 @@ legend <- get_legend(p_sudden)
 p_rt_takeover <- plot_grid(p_sudden + theme(legend.position="none"), 
                p_gradual + theme(legend.position="none"), 
                p_none + theme(legend.position="none"),
-               labels = c("Sudden", "Gradual","No Failure"), nrow=1, hjust = -1)
+               labels = c("Sudden", "Gradual","Benign"), nrow=1, hjust = -1)
 p_rt_takeover_legend <- plot_grid(p_rt_takeover, legend, rel_widths = c(4,.5))
 show(p_rt_takeover_legend)
 
@@ -527,7 +530,7 @@ mode_sudden_easy <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden"
 mode_sudden_hard <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Hard")$RT, binwidth = .01)
 
 ```
-Fig 4 shows cognitive load differences in RT~takeover~ within failure type (using positive RTs only, collapsed across bend radii). For Sudden failures (leftmost in Fig 4) there are clear difference between None, Easy, and Hard. People switch to manual mode quickest when not performing a distractor task; they switch slowest when the distractor task is more difficult. However, note that the effect size here will be pretty small since the peaks are only about .1s apart (`r mode_sudden_none` s, `r mode_sudden_easy` s, and `r mode_sudden_hard` s respectively) with SDs of approximately .2s. This difference is less pronounced for Gradual failures (middle) and No failures (right). Part of the difficulty in interpreting the distributions is due to the depleted dataset. In the Sudden condition all the data falls within fairly narrow regions (0-2s) so smooth density estimates are observed despite the relatively low numbers of trials. In the Gradual Failure and No Failure conditions the data is spread out over a wider range (note the low densitieds on the y-axis) so there begin to be 'gaps' in the distribution (effectively, unsampled space). Therefore the density estimates are bumpier and it is more difficult to see clear differences. The histograms in the background how the gaps and spikes correspond to bumps in the density estimate. Nevertheless, in the Gradual condition I am tempted to predict that with more data we would see some small differences begin to emerge between the no load condition and when the driver is cognitively loaded. 
+Fig 4 shows cognitive load differences in RT~takeover~ within failure type (using positive RTs only, collapsed across bend radii). For Sudden failures (leftmost in Fig 4) there are clear difference between None, Easy, and Hard. People switch to manual mode quickest when not performing a distractor task; they switch slowest when the distractor task is more difficult. However, note that the effect size here will be pretty small since the peaks are only about .1s apart (`r mode_sudden_none` s, `r mode_sudden_easy` s, and `r mode_sudden_hard` s respectively) with SDs of approximately .2s. This difference is less pronounced for Gradual failures (middle) and Benign failures (right). Part of the difficulty in interpreting the distributions is due to the depleted dataset. In the Sudden condition all the data falls within fairly narrow regions (0-2s) so smooth density estimates are observed despite the relatively low numbers of trials. In the Gradual Failure and Benign failure conditions the data is spread out over a wider range (note the low densitieds on the y-axis) so there begin to be 'gaps' in the distribution (effectively, unsampled space). Therefore the density estimates are bumpier and it is more difficult to see clear differences. The histograms in the background how the gaps and spikes correspond to bumps in the density estimate. Nevertheless, in the Gradual condition I am tempted to predict that with more data we would see some small differences begin to emerge between the no load condition and when the driver is cognitively loaded. 
 
 __H1 Summary__: of course this needs inferential statistics to support my eyeballing, but I will tentatively suggest that reaction time to silent failures does indeed increase as cognitive load increases, though this effect is small and depends on the severity of the failure.
 
@@ -559,7 +562,7 @@ show(p_radius)
 
 #### H2: Steering Response
 
-Here we analyse the driver response after taking over control. Firstly we plot some trajectories to understand the constraints the driver is placed under. Remeber that there are 6 potential automation trajectories, with onset times of the SAB varying between 5 and 9. This variability makes for messy plots if plotting them all in cartesian space. Therefore, Fig 6 fixes the onset time (=5 s) and the bend radius (=40 m). You can see that the potential automation trajectories are all pretty similar. It is also clear that the _Sudden_ take-overs are tightly bunched compared to the _Gradual_ and _None_ (see Fig 4). _None_ is a misnomer because there is actually an offset introduced in these trials but the offset isn't large enough to leave the road. Therefore, participants might sense some drift in lane position, prompting them to take-over. Note that in the _Gradual_ panel there is one trial where the take-over happens before the SAB is introduced. This happens in `r round(as.double(premature_perc) * 100)` % of trials.
+Here we analyse the driver response after taking over control. Firstly we plot some trajectories to understand the constraints the driver is placed under. Remeber that there are 6 potential automation trajectories, with onset times of the SAB varying between 5 and 9. This variability makes for messy plots if plotting them all in cartesian space. Therefore, Fig 6 fixes the onset time (=5 s) and the bend radius (=40 m). You can see that the potential automation trajectories are all pretty similar. It is also clear that the _Sudden_ take-overs are tightly bunched compared to the _Gradual_ and _Benign_ (see Fig 4). Therefore, participants might sense some drift in lane position, prompting them to take-over. Note that in the _Gradual_ panel there is one trial where the take-over happens before the SAB is introduced. This happens in `r round(as.double(premature_perc) * 100)` % of trials.
 
 <!-- Steering section plan:
 
@@ -691,7 +694,7 @@ show(p_sb)
 
 ```
 
-Fig 7 shows some interesting difference. Sudden failures clearly produce more 'going out of lane', but they people generally take-over at lower SBs when the failure is Sudden. _note that the none averages out because the take-over is either side of zero).
+Fig 7 shows some interesting difference. Sudden failures clearly produce more 'going out of lane', but they people generally take-over at lower SBs when the failure is Sudden. _note that the Benign averages out because the take-over is either side of zero).
 
 ```{r plotting cog load within, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 8. Steering bias for cogload within different failure types"}
 
@@ -892,7 +895,7 @@ p_40 <- ggplot(data = filter(steergaze_manual_rotated_40, failure_type == "Sudde
 
 show(p_40)
 
-p_sb <- ggplot(data = filter(steergaze_manual, radii == 40, failure_type != "None", f < 300), aes(x = f, y= SB_mirrored, col = factor(failure_type))) +
+p_sb <- ggplot(data = filter(steergaze_manual, radii == 40, failure_type != "Benign", f < 300), aes(x = f, y= SB_mirrored, col = factor(failure_type))) +
   geom_path(aes(group = trialid), alpha = .3) +
   geom_smooth(se= F) +
   #scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
@@ -1037,10 +1040,10 @@ ggplot(data = filter(takeover_state, ttlc < 10), aes(x = ttlc, y= RT, col = fact
   geom_point() +
   scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load") 
 
-ggplot(data = filter(takeover_state, ttlc < 10, RT > 0, failure_type != "None", rads == 40), aes(x = RT, y= ttlc, shape = factor(autofile), col = factor(onset))) + 
+ggplot(data = filter(takeover_state, ttlc < 10, RT > 0, failure_type != "Benign", rads == 40), aes(x = RT, y= ttlc, shape = factor(autofile), col = factor(onset))) + 
   geom_point(alpha = .5)
 
-ggplot(data = filter(pre_takeover_state, ttlc < 10, RT > 0, failure_type != "None"), aes(x = ttlc, y= RT)) + 
+ggplot(data = filter(pre_takeover_state, ttlc < 10, RT > 0, failure_type != "Benign"), aes(x = ttlc, y= RT)) + 
   geom_point(alpha = .5)
   
 
