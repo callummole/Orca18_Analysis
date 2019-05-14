@@ -43,8 +43,9 @@ theme_transition <- theme_classic() +
         axis.text = element_text(face="plain",colour="black",size="7"),
         legend.text = element_text(face="plain",colour="black",size="7"),
         legend.title = element_text(face="bold",colour="black",size="8"),
-        legend.key = element_blank(),
-        panel.grid.major.y = element_line(color="grey85",size=.2, linetype = 2))
+        legend.key = element_blank()
+        #panel.grid.major.y = element_line(color="grey85",size=.2, linetype = 2)
+        )
 
 ```
 
@@ -462,7 +463,7 @@ ggplot(steergaze_trialavgs, aes(x = RT, group = factor(failure_type), fill = fac
 
 ```
 
-Fig 3 shows massive differences in how quickly drivers disengage the automation after SAB onset (using positive RTs only). In the _Benign_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be look at in turn.
+Fig 3 shows massive differences in how quickly drivers disengage the automation after SAB onset (using positive RTs only). In the _Benign_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds across the three failure types the failure type conditions will be plotted separately.
 
 ```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. RT takeover across cognitive loads"}
 
@@ -505,7 +506,7 @@ p_benign <- ggplot(filter(steergaze_trialavgs, failure_type == "Benign"),
 legend <- get_legend(p_sudden)
 p_rt_takeover <- plot_grid(p_sudden + theme(legend.position="none"), 
                p_gradual + theme(legend.position="none"), 
-               p_none + theme(legend.position="none"),
+               p_benign + theme(legend.position="none"),
                labels = c("Sudden", "Gradual","Benign"), nrow=1, hjust = -1)
 p_rt_takeover_legend <- plot_grid(p_rt_takeover, legend, rel_widths = c(4,.5))
 show(p_rt_takeover_legend)
@@ -529,12 +530,20 @@ mode_sudden_none <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden"
 mode_sudden_easy <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Easy")$RT, binwidth = .01)
 mode_sudden_hard <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Hard")$RT, binwidth = .01)
 
+sd_sudden_none <- sd(na.omit(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "None", RT > 0)$RT)) 
+sd_sudden_easy <- sd(na.omit(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Easy", RT > 0)$RT)) 
+sd_sudden_hard <- sd(na.omit(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Hard", RT > 0)$RT)) 
+
+median_gradual_none <- median(na.omit(filter(steergaze_trialavgs, failure_type == "Gradual",cogload == "None", RT > 0)$RT)) 
+median_gradual_easy <- median(na.omit(filter(steergaze_trialavgs, failure_type == "Gradual",cogload == "Easy", RT > 0)$RT)) 
+median_gradual_hard <- median(na.omit(filter(steergaze_trialavgs, failure_type == "Gradual",cogload == "Hard", RT > 0)$RT))
+
 ```
-Fig 4 shows cognitive load differences in RT~takeover~ within failure type (using positive RTs only, collapsed across bend radii). For Sudden failures (leftmost in Fig 4) there are clear difference between None, Easy, and Hard. People switch to manual mode quickest when not performing a distractor task; they switch slowest when the distractor task is more difficult. However, note that the effect size here will be pretty small since the peaks are only about .1s apart (`r mode_sudden_none` s, `r mode_sudden_easy` s, and `r mode_sudden_hard` s respectively) with SDs of approximately .2s. This difference is less pronounced for Gradual failures (middle) and Benign failures (right). Part of the difficulty in interpreting the distributions is due to the depleted dataset. In the Sudden condition all the data falls within fairly narrow regions (0-2s) so smooth density estimates are observed despite the relatively low numbers of trials. In the Gradual Failure and Benign failure conditions the data is spread out over a wider range (note the low densitieds on the y-axis) so there begin to be 'gaps' in the distribution (effectively, unsampled space). Therefore the density estimates are bumpier and it is more difficult to see clear differences. The histograms in the background how the gaps and spikes correspond to bumps in the density estimate. Nevertheless, in the Gradual condition I am tempted to predict that with more data we would see some small differences begin to emerge between the no load condition and when the driver is cognitively loaded. 
+Fig 4 shows cognitive load differences in RT~takeover~ within failure type (using positive RTs only, collapsed across bend radii). For Sudden failures (leftmost in Fig 4) there are clear difference between None, Easy, and Hard. People switch to manual mode quickest when not performing a distractor task; they switch slowest when the distractor task is more difficult. However, note that the effect size here will be pretty small since the peaks are only about .1s apart (modes are `r mode_sudden_none` s, `r mode_sudden_easy` s, and `r mode_sudden_hard` s respectively) with SDs of approximately .2s. This difference is less pronounced for Gradual failures (middle) and Benign failures (right). In the Gradual Failure and Benign failure conditions the data is spread out over a wider range than in Sudden failures, so the depleted dataset causes problems for interpreting the shape of the distribution and the peaks may be unreliable. Nevertheless, for _Gradual_ failures the median RT for No load seems to be earlier (`r round(median_gradual_none), 2` s) than the _Easy_ (`r round(median_gradual_easy), 2` s) and _Hard_ (`r round(median_gradual_hard), 2` s) cognitive load conditions.
 
-__H1 Summary__: of course this needs inferential statistics to support my eyeballing, but I will tentatively suggest that reaction time to silent failures does indeed increase as cognitive load increases, though this effect is small and depends on the severity of the failure.
+Fig 5, below, plots RT~takeover~ by bend radii for each failure type. Differences in RT~takeover~ between bend radii, if there are any, appear small.  
 
-```{r plotting RT takeover within radius, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. RT takeover across cognitive loads"}
+```{r plotting RT takeover within radius, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 5. RT takeover across bend radii"}
 
 #first plot is the RTs across different failure types. Boxplots or density estimates are good option.
 
@@ -553,7 +562,12 @@ show(p_radius)
 
 ```
 
-```{r modelling RT, echo=FALSE, message=FALSE, warning=FALSE}
+__H1 Summary__: of course this needs inferential statistics to support my eyeballing, but I will tentatively suggest that reaction time to silent failures does indeed increase as cognitive load increases, though this effect is small and depends on the severity of the failure.
+
+The next section will examine the steering response after takeover.
+
+
+```{r RT bayes inference, echo=FALSE, message=FALSE, warning=FALSE}
 
 # Bayes inference for effects?
 
@@ -562,7 +576,7 @@ show(p_radius)
 
 #### H2: Steering Response
 
-Here we analyse the driver response after taking over control. Firstly we plot some trajectories to understand the constraints the driver is placed under. Remeber that there are 6 potential automation trajectories, with onset times of the SAB varying between 5 and 9. This variability makes for messy plots if plotting them all in cartesian space. Therefore, Fig 6 fixes the onset time (=5 s) and the bend radius (=40 m). You can see that the potential automation trajectories are all pretty similar. It is also clear that the _Sudden_ take-overs are tightly bunched compared to the _Gradual_ and _Benign_ (see Fig 4). Therefore, participants might sense some drift in lane position, prompting them to take-over. Note that in the _Gradual_ panel there is one trial where the take-over happens before the SAB is introduced. This happens in `r round(as.double(premature_perc) * 100)` % of trials.
+Firstly, we plot some trajectories to understand the constraints the driver is placed under. To make the failures unpredictable there are 6 potential automation trajectories, with onset times of the SAB varying between 5 and 9. This variability makes for messy plots if plotting all trajectories in cartesian coordinates. Therefore, Fig 6 fixes the onset time (=5 s, blue star in Fig 6) and the bend radius (=40 m). You can see in Fig 6 that the potential automation trajectories all similarly hug the midline. It is also clear that the _Sudden_ take-overs are tightly bunched compared to the _Gradual_ and _Benign_ (see also the RTs in Fig 4). Note that in the _Gradual_ panel there is one trial where the take-over happens before the SAB is introduced. This happens in `r round(as.double(premature_perc) * 100)` % of trials.
 
 <!-- Steering section plan:
 
@@ -656,10 +670,10 @@ show(p_selection)
 
 ```
 
-By plotting lane position after take-over we can compare the trajectories across different onset times and pre-recorded trajectories. 
+Lane position allows for a better comparison of trajectories (Fig 7). Fig 7 plots the lane position immediately after switching to manual control. On average drivers seem to switch when lane position is closer to the midline in _Sudden_ failures than in _Gradual_ or _Benign_ failures. However, due to the larger SAB drivers take longer to correct for the error in lane position. The fact that drivers tend to switch at a lower lane error in _Sudden_ failures suggests that drivers may be responding to rate of change of lane position (i.e. Time to Lane Crossing, which is higher in _Sudden_ failures) rather than lane position per se. 
 
 
-```{r plotting lane position, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 7. Steering bias for different failure types"}
+```{r plotting lane position, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 7. Steering bias for different failure types. Note that to avoid plotting, oversteer SAB for Benign failures are not shown"}
 
 
 #A) Steering bias for Different failures, 
@@ -678,14 +692,15 @@ steergaze_manual <- steergaze_manual %>%
          f = seq(1:n()))
 
 
-#plot steering bias
-p_sb <- ggplot(data = filter(steergaze_manual, f < 500), aes(x = f, y= SB_mirrored, col = factor(failure_type))) +
+#plot steering bias, exclude the oversteering SAB
+p_sb <- ggplot(data = filter(steergaze_manual, f < 500, yawrate_offset != .15), aes(x = f / 60, y= SB_mirrored, col = factor(failure_type))) +
   geom_path(aes(group = trialid), alpha = .1) +
-  geom_smooth(se= F, size = 1.5) +
+  geom_smooth(se= F, size = 1.5, method = "loess", span = .1) +
  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
   geom_hline(yintercept = c(-1.5, 1.5), col = "grey", size = 1.5, linetype = "dashed") +
   ylim(c(-2,1.6)) +
   geom_hline(yintercept = 0, col = "black", linetype = "dashed") +
+  ylab("Lane Position (m)") + xlab("Time (s)") +
   theme_transition
   
 
@@ -694,26 +709,24 @@ show(p_sb)
 
 ```
 
-Fig 7 shows some interesting difference. Sudden failures clearly produce more 'going out of lane', but they people generally take-over at lower SBs when the failure is Sudden. _note that the Benign averages out because the take-over is either side of zero).
+Fig 8 stratifies cognitive loads within failure types. From the average trajectories it appears that tend to correct for errors more quickly when they are not cognitive loaded. This is particularly true for _Sudden_ failures and to a lesser extent _Gradual_ failures. There are not many trials included in the _Benign_ plot so I would caution against drawing any averaged conclusions. Correcting for errors more slowly when cognitively loaded was a feature of Wilkie et al., 2019. However, in that experiment takeovers starting from the same lane position each time. In this experiment if drivers were slower to takeover more error would have accrued, so it is plausible that differences in lane position over time (Fig 8) could be partly due to RT differences between cognitive load conditions (see Fig 4). 
 
 ```{r plotting cog load within, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 8. Steering bias for cogload within different failure types"}
-
 
 #B) Cognitive load within failures, 
 
 #C) Radii within failures,
 
-
-
 #plot steering bias
-p_sb_cogload <- ggplot(data = filter(steergaze_manual, f < 300), aes(x = f, y= SB_mirrored, col = factor(cogload))) +
+p_sb_cogload <- ggplot(data = filter(steergaze_manual, f < 300, yawrate_offset != .15), aes(x = f / 60, y= SB_mirrored, col = factor(cogload))) +
   geom_path(aes(group = trialid), alpha = .1) +
-  geom_smooth(se= F, size = 1.5) +
+  geom_smooth(se= F, size = 1.5, method = "loess", span = .1) +
   facet_wrap(~failure_type) +
   scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
   geom_hline(yintercept = c(-1.5, 1.5), col = "grey", size = 1.5, linetype = "dashed") +
   ylim(c(-2,1.6)) +
   geom_hline(yintercept = 0, col = "black", linetype = "dashed") +
+  ylab("Lane Position (m)") + xlab("Time (s)") +
   theme_transition
   
 
@@ -721,10 +734,10 @@ show(p_sb_cogload)
 
 
 ```
-Cogload seems to correct for errors more gradually when cognitively loaded. We see this also in Wilkie et al. 2019.
 
 
-```{r plotting radii within failure types, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 9. Steering bias for Radii within failure types"}
+
+```{r plotting radii within failure types, echo=FALSE, eval=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 9. Steering bias for Radii within failure types"}
 
 
 #B) Cognitive load within failures, 
@@ -734,7 +747,7 @@ Cogload seems to correct for errors more gradually when cognitively loaded. We s
 
 
 #plot steering bias
-p_sb_radii <- ggplot(data = filter(steergaze_manual, f < 300), aes(x = f, y= SB_mirrored, col = factor(radii))) +
+p_sb_radii <- ggplot(data = filter(steergaze_manual, f < 300, yawrate_offset != .15), aes(x = f, y= SB_mirrored, col = factor(radii))) +
   geom_path(aes(group = trialid), alpha = .1) +
   geom_smooth(se= F, size = 1.5) +
   facet_wrap(~failure_type) +
@@ -749,40 +762,153 @@ show(p_sb_radii)
 
 
 ```
-Fig 9. Take longer to correct in 80 m rather than 40 m, on average.
 
-Let's have a look at the SWA plots.
-
+To disentangle whether the separation between average trajectories for 'No Load' and 'Loaded' conditions is due to less aggressive steering in the Cognitively loaded conditions we can take a look at the steering wheel angle plots over time (Fig 9). If the differences in lane position are _only_ driven by delayed RTs we would expect the average SWA traces to be overlapping (i.e. on average, identical steering responses across cognitive load conditions irrespective of small changes in initial lane position). Conversely, we might also expect a reduced (in magnitude) or delayed steering wheel angle response in cognitive load conditions, as per Wilkie et al 2019. 
 
 
-```{r plotting SWA, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 10. SWA for cogload within different failure types"}
+```{r plotting SWA, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 9. SWA for cogload within different failure types. The dashed line is the point of takeover"}
 
 
-#B) Cognitive load within failures, 
+#pick up .5 s before trial takeover so you can see how quickly SWA moves after takeover.
 
-#C) Radii within failures,
+delay = 1
+steergaze_manual_delay <- steergazedata %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + OnsetTime - delay))
 
+### Reset trial so they all start at around [0,0] 
+steergaze_manual_delay <- steergaze_manual_delay %>% 
+  ungroup() %>% 
+  group_by(trialid) %>%
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
 
 
 #plot steering bias
-p_swa_cogload <- ggplot(data = filter(steergaze_manual, f < 300), aes(x = f, y= SWA_mirrored, col = factor(cogload))) +
+p_swa_cogload <- ggplot(data = filter(steergaze_manual_delay, f < 360, yawrate_offset != .15), aes(x = timestamp_zero - delay, y= SWA_mirrored, col = factor(cogload))) +
   geom_path(aes(group = trialid), alpha = .1) +
-  geom_smooth(se= F, size = 1.5) +
-  facet_wrap(~failure_type) +
+  geom_smooth(se=F, size = 1.5, method="loess", span = .1) +
+  facet_wrap(radius~failure_type) +
   scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
   theme_transition +
-  ylim(c(0,90))
+  ylim(c(0,90)) +
+  xlab("Time (s)") + ylab("Steering Wheel Angle (degrees)") +
+  geom_vline(xintercept = 0, col = "black", linetype = "dashed")
   
-
 show(p_swa_cogload)
 
 
 ```
-Here we see capping of the SWA for Sudden failures, where the desired turning input is greater than 90 degrees. Essentially we hit a limit of the wheel system. Participants are likely to then over-correct because they over-turn the wheel. This should be corrected for is a future design. 
+In no conditions do we see a convincing evidence of a reduced or delayed steering response when cognitively loaded (Fig 9). In _Benign_ and _Gradual_ failures (right and middle, Fig 9) the steering response seems pretty similar across cognitive load conditions, suggesting any separation in the steering bias plot could be due to reaction times.
 
-However, we would expect the participants to not turn the wheel as much as they need to (essentially, to not correct fully) for the cognitively loaded conditions. This is contaminated here by the sensitivity capping. 
+The _Sudden_ failures (left, Fig 9) require more description. The first thing to note is that the recorded steering wheel angle reaches the maximum yaw-rate. The steering wheel angle is not the true angle, it is re-calculated from a [1, -1] steering wheel value, which hits a limit at 90 degrees. Therefore, for many of the trials participants could be turning the wheel over the 90 degrees mark, yet the inputted yaw-rate into the simulation would be capped. This clearly happens for _Sudden_ failures where there is need for a sharp turn. Despite the wheel angle capping, it is interesting that experiencing _Hard_ cognitive load seems to cause greater wheel turns than _Easy_ and _None_. It is probable that this is not due to an effect of cognitive load on _steering_. Rather, it could be the combined effect of slower RTs causing greater steering demand which cannot be wholly compensated due to the capped steering wheel angle. Indeed, disentangling the indirect effects of cognitive load on steering (from increasing RTs and therefore increasing steering demand) with the direct effects of cognitive load on steering will be difficult, as steering demands correlate with RTs. The next plot examines this issue by plotting three measures of steering aggression (SWA~max~, SWA~var~, and SWA~vel~ next to RT~takeover~)
 
-```{r filtering takeover trials, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10,fig.height=10,fig.cap="Fig 5. A) Average trajectories, B) Shown as steering bias"}
+```{r plot SWA variability and RT, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 10. Steering aggression measures correlated with RT. A) Maximum Steering Wheel Angle, B) Standard Deviation of Steering Wheel Angle for the whole manual period"}
+
+
+#pick up .5 s before trial takeover so you can see how quickly SWA moves after takeover.
+
+takeover_trialavgs <- steergaze_manual %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(n() > 180) %>% 
+  summarise(RT = first(RT),
+            SWA_sd = sd(SWA_mirrored, na.rm = T),
+            SWA_max = max(SWA_mirrored, na.rm = T),
+            SWA_vel = mean(abs(diff(SWA_mirrored) * 60), na.rm = T),
+            cogload = first(cogload),
+            rads = first(radii),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime)
+            )
+
+
+#computer correlations for the plots
+cor_SWA_RT <- takeover_trialavgs %>% 
+  ungroup() %>% 
+  filter(RT > 0) %>% 
+  group_by(failure_type) %>%
+  summarise(r_SWA_max = cor(SWA_max, RT, use = "na.or.complete", method = "pearson"),
+            r_SWA_sd = cor(SWA_sd, RT, use = "na.or.complete", method = "pearson"),
+            r_SWA_vel = cor(SWA_vel, RT, use = "na.or.complete", method = "pearson"))
+
+#plot max SWA by RT
+p_SWA_max <- ggplot(data = filter(takeover_trialavgs, RT>0), aes(x = RT, y = SWA_max, col = factor(cogload), fill = factor(cogload))) +
+  geom_point(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_smooth(se = T, method = lm) +
+  geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(15, 90))
+
+#show(p_SWA_max)
+
+p_SWA_sd <- ggplot(data = filter(takeover_trialavgs, RT>0), aes(x = RT, y = SWA_sd, col = factor(cogload), fill = factor(cogload))) +
+  geom_point(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_smooth(se = T, method = lm) +
+  geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_sd,2), sep = ""), x = c(1.5, 1.25, 4.5), y = c(10, 20, 20))) +
+  theme_transition +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["var"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(0, 30))
+
+#show(p_SWA_sd)
+
+#filter SWA_vel is to exclude a couple of outliers from plotting
+p_SWA_vel <- ggplot(data = filter(takeover_trialavgs, RT>0), aes(x = RT, y = SWA_vel, col = factor(cogload), fill = factor(cogload))) +
+  geom_point(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_smooth(se = T, method = lm) +
+  geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_vel,2), sep = ""), x = c(1.5, 1.0, 4), y = c(8, 50, 50))) +
+  theme_transition +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["vel"]*" ("*degree*" / s)")) +
+  expand_limits(x = c(0, 2), y = c(0, 80))
+
+#show(p_SWA_vel)
+
+legend <- get_legend(p_SWA_max)
+p <- plot_grid(p_SWA_max + theme(legend.position="none"), 
+               p_SWA_sd + theme(legend.position="none"),
+               p_SWA_vel + theme(legend.position="none"), 
+               labels = c("A", "B", "C"), nrow=3)
+p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+show(p_legend)
+
+#for reportiong in text
+#takeover_triallengths <- steergaze_manual %>% 
+#  ungroup() %>% 
+#  group_by(trialid) %>% 
+#  summarise(frames = n(),
+#            failure_type = first(failure_type))
+
+#print(min(takeover_triallengths$frames) / 60)
+#print(max(takeover_triallengths$frames) / 60)
+
+#ggplot(takeover_triallengths, aes(x = frames / 60, fill = failure_type)) + geom_histogram(position = "identity", alpha = .5) 
+```
+
+Fig 10 plots the maximum steering wheel angle (SWA~max~, Fig 10A) and the standard deviation of steering wheel angle (SWA~var~, Fig 10B), and the average steering wheel velocity (SWA~vel~) for the manual control period of driving. Only trials with at least three seconds of manual driving are plotted, since by this time most drivers have made their initial steering correction (see Fig 9). Trials can have a maximum of 15 seconds of driving. A higher SWA~max~ would mean that the driver executed a sharper turn. A high SWA~var~ is often considered a (bad) proxy for wiggly steering. The two measures are correlated since a higher SWA~max~ usually indicates a higher SWA~var~. Steering wheel angle velocity is arguably a better measure for 'jerkier' steering as higher SWA~vel~ values would mean a driver turned the wheel more rapidly, but in particular dataset the measure is partly confounded by capping of the steering wheel angle, where velocity equals zero for the duration of time where the limit is hit.
+
+Reassuringly, similar trends are seen across all measures, suggesting that in our experiment these higher values on all three measures are indicative of steering corrections that are executed with greater magnitude and speed. Here we will refer to such steering corrections as _steering demand_. Fig 10 is designed to disentangle the relative contribution of RT~takeover~ and cognitive load to steering demand. It is hypothesised that a positive correlation will exist between RT~takeover~ and the steering demand measures, since the later the RT~takeover~ the closer one is to lane boundaries. It is further hypothesised, based on the literature base, that increased cognitive load might cause a _reduction_ in steering demand. If these two hypotheses did not interact, one would see a positive correlation of RT~takeover~ and steering demand, with vertically separated regression lines for each cognitive load condition. The different failure conditions are discussed in turn:
+
+- In _Sudden_ failures there is a positive correlation on all measures. In SWA~max~ and SWA~vel~ the correlation is weaker, presumably due to the capping of steering wheel angle limiting the maximum values for both measures. The coloured regression lines for separate cognitive load conditions are generally overlapping, and when they are not it seems to be due to outlying values (i.e. they are some slow responses in the _Hard_ condition). Therefore, it seems that any change in steering demand cognitive load causing lower RT~takeover~s rather than reducing the propensity to correct for errors.
+
+- In _Gradual_ failures we observe a consistent positive correlation between RT~takeover~ and steering demand. It's probable that the trend is easier to see than in _Sudden_ because the rarely hit the clipping limit for _Gradual_ failures (Fig 9), so the measures are less confounded. It is interesting that in all measures the regression line for _None_ sits slightly above the regression lines for _Hard_ and _Easy_, hinting at a direct effect of cognitive load on steering demand. However, such an effect appears to be small compared to the impact of taking over control later. 
+
+- Note that in _Benign_ failures there are not many trials plotted because trails were excluded if they contained less than three seconds of manual control. Nevertheless, taking over later does not appear to result in greater steering demand. Remember that the _Benign_ failures do not require a takeover, so it is possible that drivers sometimes switch to manual and do not make any corrections. Nor does there appear to be differences between cognitive load conditions in steering demand. 
+
+
+__H2 Summary__: I will tentatively suggest that there does not appear to be practically significant direct effect of cognitive load on the aggression of the first steering response. I propose that RT~takeover~ (which seems to fluctuate with cognitive load) is a stronger determinant of the strength of the first steering response. 
+
+```{r old code, echo=FALSE, message=FALSE, eval= FALSE, warning=FALSE, fig.width=10,fig.height=10,fig.cap="Fig 5. A) Average trajectories, B) Shown as steering bias"}
 
 #can use AutoFlag to select manual control periods.
 
@@ -1072,7 +1198,39 @@ ggplot(data = filter(takeover_state, ttlc < 10, failure_type == "Gradual"), aes(
 ```
 
 
+ ### Summary so Far: what about the mechanism? 
+ 
 
+TO BE FINISHED ON WEDS 15TH
+
+ So far we have examined the speed of takeover and aggression of the initial steering response. While within each failure type there appear to be some interesting phenomena relating to cognitive load, by far the strongest determinant of RT~takeover~ is the severity of the failure (i.e. the magnitude of SAB). The most prevalent questions seem to be exactly _how_ the magnitude of SAB changes RT~takeover. What perceptual information is the driver responding to? As mentioned in discussion of Fig 7 the drivers do not always intervene at the same lane position. Rather they intervene at earlier lane positions for _Sudden_ failures, suggesting that they may be responding to rate of change information. However, since in effect we only have two SAB conditions (since there aren't many takeovers in the _Benign_ failures) any modelling to determine how drivers are using time to (lane) crossing (TTC) information will be overfitted to this dataset (Jami has done some preliminary development of models in this direction).
+ 
+Therefore, we recommend massively increasing the levels (e.g. ten levels) of silent failures so we have a decent breadth to fit models to. Only using one radii will increase the amount of levels we can assess. To ensure even coverage we will keep the design factorial, this means we can also do inferences on the data between conditions.
+
+Jami has also suggested that we could look model cognitive load as reducing sampling rate. Worth pursuing and I think would mean keeping the cognitive load conditions. 
+
+
+ 
+ 
+ 
+ 
+ ### Other Pre-registered Hypotheses
+ 
+
+In the pre-registration there were three more hypotheses. Here I briefly list what we now know.
+ 
+- __H3__: Participants will sample from a more constricted region of the screen for increased cognitive load.
+
+_Not looked at yet_
+
+- __H4__: These effects of cognitive load will increase as cognitive load difficulty increases.
+
+_For sudden failures RT~takeover~ appears to be stratified somewhat by Easy or Hard load. However, this effect is small, and smaller still (or nonexistent) in the less sever failures_.
+
+- __H5__: Effects of cognitive load will become more pronounced when the (steering) task is more difficult (for sharp bends and sudden silent failures). 
+
+_There does not seem to be an interaction jumping out for bend radii. Nevertheless, the small effects of cognitive load are more pronounced for silent failures_. 
+ 
 <!-- 
 
 One might predict that ttlc does not vary since this is a candidate for the threshold one is responding to. 
@@ -1084,22 +1242,8 @@ issue of capped steering wheel angles at large angles produces inability to corr
 
 
 
-### Gaze
-
-### Steering and Gaze
-
-### with/without automation.
-
-### plots of steering trajectories.
-
-### plots of gaze. 
-
-
 <!-- 
-Future Analysis:
-- Are any of the variables affected by onset time?
-- Are any of the variables affected by which automated trajectory is being played? 
-
-- Plot the distribution of when they took over in the trial.
-- And also the x z position of when they took over.
+Gaze with and without cognitive load.
+Gaze with and without automation. 
 -->
+
