@@ -904,21 +904,6 @@ p <- plot_grid(p_SWA_max + theme(legend.position="none"),
 p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
 show(p_legend)
 
-#plot RT and SWA_max to compare different RTs and steering demand across Failure Type.
-
-#This is a useful plot for understanding that steering corrections are not linked just to the speed of response.
-
-ggplot(data = filter(takeover_trialavgs, RT>0, failure_type != "Benign"), aes(x = RT, y = SWA_max, col = factor(failure_type), fill = factor(failure_type))) +
-  geom_point(alpha = .8) +
-  #facet_wrap(~failure_type) +
-  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
-  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
-  geom_smooth(se = T, method = lm) +
-  #geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
-  theme_transition_report +
-  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
-  expand_limits(x = c(0, 2), y = c(15, 90))
-
 
 #for reportiong in text
 #takeover_triallengths <- steergaze_manual %>% 
@@ -944,7 +929,122 @@ Reassuringly, similar trends are seen across all measures, suggesting that in ou
 - Note that in _Benign_ failures there are not many trials plotted because trails were excluded if they contained less than three seconds of manual control. Nevertheless, taking over later does not appear to result in greater steering demand. Remember that the _Benign_ failures do not require a takeover, so it is possible that drivers sometimes switch to manual and do not make any corrections. Nor does there appear to be differences between cognitive load conditions in steering demand. 
 
 
-__H2 Summary__: I will tentatively suggest that there does not appear to be practically significant direct effect of cognitive load on the aggression of the first steering response. I propose that RT~takeover~ (which seems to fluctuate with cognitive load) is a stronger determinant of the strength of the first steering response. 
+__H2 Summary__: I will tentatively suggest that there the direct effect of cognitive load on the aggression of the first steering response is not large enough to pay serious attention to. I propose that the speed of response (which seems to fluctuate with cognitive load) is a stronger determinant of the strength of the first steering response. 
+
+ 
+```{r plot TTLC, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=6,fig.cap="Fig 11. A) Lane position and RT takeover. B) TTLC and RT takever"}
+
+#what do I want to plot? 
+
+#TTLC @ takeover next to RT?
+#add delay? 
+takeover_state <- steergazedata %>%
+  ungroup() %>% 
+  filter(AutoFlag == FALSE) %>% 
+  group_by(trialid) %>%
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = first(SB_change),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = first(RT),
+            TTLC = first(TTLC),
+            bend = first(bend),
+            ppid = first(ppid),
+            SWA_max = max(SWA_mirrored, na.rm = T),
+            autofile = first(AutoFile))
+
+#ttlc by RT
+#ggplot(data = filter(takeover_state, TTLC < 10, RT > 0), aes(x = TTLC, y=RT, col = factor(cogload))) + 
+#  geom_point() +
+#  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load") 
+
+p_sb_RT <- ggplot(data = filter(takeover_state, TTLC < 10, RT > 0, failure_type != "Benign"), aes(x = sb_mirrored, y=RT, col = factor(failure_type))) + 
+  geom_point() +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  theme_transition_report +
+  xlab(expression("Lane Position (m)")) + ylab(expression("RT"["takeover"]*" (s)")) 
+
+
+p_sb_ttlc <- ggplot(data = filter(takeover_state, TTLC < 10, RT > 0, failure_type != "Benign"), aes(x = TTLC, y=RT, col = factor(failure_type))) + 
+  geom_point() +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  theme_transition_report +
+  xlab(expression("TTLC (s)")) + ylab(expression("RT"["takeover"]*" (s)")) 
+  
+legend <- get_legend(p_sb_RT)
+p <- plot_grid(p_sb_RT + theme(legend.position="none"),
+               p_sb_ttlc + theme(legend.position="none"),
+               labels = c("A", "B"), nrow=1)
+p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+show(p_legend)
+
+
+``` 
+
+However, the magnitude of steering corrections are not solely determined by how quickly drivers respond. Error develops at different rates in different conditions, so an identical RT~takeover~ across both _Gradual_ and _Sudden_ failure types results in different lane positions (Fig 11A) and urgency (Fig 11B) at takeover. Therefore, if one plots SWA~max~ against RT~takeover~, stratified by failure type, there are clear differences between the conditions (Fig 12A). If steering magnitude was driven solely by speed of response, we would expect both failure types to 'collapse' along the same dimension. Fig 12B (SWA~max~ by lane position and Fig 12C (SWA~max~ by TTLC) seem to be closer to achieving a single dimension which determines response across conditions, yet there is still reasonable stratification across failure type conditions. 
+
+
+```{r plot SWA max and RT takeover, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=6,fig.cap="Fig 12. A) SWA max by RT and Failure type. B) SWA max by TTLC and Failure Type"}
+
+
+
+
+
+#plot RT and SWA_max to compare different RTs and steering demand across Failure Type.
+
+#This is a useful plot for understanding that steering corrections are not linked just to the speed of response.
+
+p_SWAmax_RT <- ggplot(data = filter(takeover_state, RT>0, failure_type != "Benign"), aes(x = RT, y = SWA_max, col = factor(failure_type), fill = factor(failure_type))) +
+  geom_point(alpha = .8) +
+  #facet_wrap(~failure_type) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  geom_smooth(se = T, method = lm) +
+  #geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(15, 90))
+
+p_SWAmax_sb <- ggplot(data = filter(takeover_state, RT>0, TTLC< 10, failure_type != "Benign"), aes(x = sb_mirrored, y = SWA_max, col = factor(failure_type), fill = factor(failure_type))) +
+  geom_point(alpha = .8) +
+  #facet_wrap(~failure_type) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  geom_smooth(se = T, method = lm) +
+  #geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition_report +
+  xlab(expression("Lane Position (m)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(y = c(15, 90))
+
+p_SWAmax_ttlc <- ggplot(data = filter(takeover_state, RT>0, TTLC< 10, failure_type != "Benign"), aes(x = TTLC, y = SWA_max, col = factor(failure_type), fill = factor(failure_type))) +
+  geom_point(alpha = .8) +
+  #facet_wrap(~failure_type) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  geom_smooth(se = T, method = lm) +
+  #geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition_report +
+  xlab(expression("TTLC (s)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(15, 90))
+
+legend <- get_legend(p_SWAmax_RT)
+p <- plot_grid(p_SWAmax_RT + theme(legend.position="none"),
+               p_SWAmax_sb + theme(legend.position="none"),
+               p_SWAmax_ttlc + theme(legend.position="none"),
+            labels = c("A", "B", "C"), nrow=1)
+p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+show(p_legend)
+
+
+```
+
+
 
 ```{r old code, echo=FALSE, message=FALSE, eval= FALSE, warning=FALSE, fig.width=10,fig.height=10,fig.cap="Fig 5. A) Average trajectories, B) Shown as steering bias"}
 
@@ -1236,68 +1336,35 @@ ggplot(data = filter(takeover_state, ttlc < 10, failure_type == "Gradual"), aes(
 ```
 
 
-### Summary so Far: what about the mechanism? 
+
+### What determines reaction time? 
  
+So far we have examined the speed of takeover and aggression of the initial steering response. This varies massively across failure type conditions, and less so during differences in cognitive load. However, the SAB magnitudes used in our conditions is fairly artificial (though the TTLCs were based on the literature), and we are not particularly interested whether there are differences between our categorical conditions. We are more interested in what perceptual information people are attending to that means they react quicker and with greater magnitude of response in one condition over the other.
 
-TO BE FINISHED ON WEDS 15TH...
+With this in mind we proceed to conduct regression analysis with variables from the scene as continuous predictors, rather than with failure_type as categorical predictors. In the first instance the RT~takeover~ is predicted from the state of the world at .25 s before the switch to manual mode (to allow for execution delays). Two variables are chosen for a first pass: lane position and change in lane position.
 
-So far we have examined the speed of takeover and aggression of the initial steering response. While within each failure type there appear to be some interesting phenomena relating to cognitive load, by far the strongest determinant of RT~takeover~ is the severity of the failure (i.e. the magnitude of SAB). The most important question seems to be exactly _how_ the magnitude of SAB changes RT~takeover~. What perceptual information is the driver responding to? As mentioned in discussion of Fig 7 the drivers do not always intervene at the same lane position. Rather they intervene at earlier lane positions for _Sudden_ failures, suggesting that they may be responding to rate of change information. However, in effect we only have two SAB conditions (as there aren't many takeovers in the _Benign_ failures) any modelling to determine how drivers are using time to (lane) crossing (TTC) information will be overfitted to this dataset (Jami has done some preliminary development of models in this direction).
+```{r modelling RT with regression, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=6,fig.cap="Fig 13.X"}
+
+```
+
+<!---
  
 Therefore, we recommend massively increasing the levels (e.g. ten levels) of silent failures so we have a decent breadth of SABs (and therefore TTCs) to fit models to. Only using one radii will increase the amount of levels we can assess. To ensure even coverage we will keep the design factorial, this means we can also do inferences on the data between conditions.
 
 Jami has also suggested that we could look model cognitive load as reducing sampling rate. Worth pursuing and I think would mean keeping the cognitive load conditions... 
 
 Another design change is increasing sensitivity of the steering wheel to lift the capping confound of the wheel angles...
- 
-```{r plot TTLC, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 11. TTLC."}
 
-#what do I want to plot? 
+-->
 
-#TTLC @ takeover next to RT?
-#add delay? 
-takeover_state <- steergazedata %>%
-  ungroup() %>% 
-  filter(AutoFlag == FALSE) %>% 
-  group_by(trialid) %>%
-  summarise(x = first(world_x_mirrored),
-            z = first(World_z),
-            rads = first(radii),
-            sb = first(SteeringBias),
-            sb_mirrored = first(SB_mirrored),
-            sb_change = first(SB_change),
-            cogload = first(cogload),
-            failure_type = first(failure_type),
-            onset = first(OnsetTime),
-            time = first(timestamp_trial),
-            RT = first(RT),
-            TTLC = first(TTLC),
-            bend = first(bend),
-            ppid = first(ppid),
-            autofile = first(AutoFile))
-
-#ttlc by RT
-ggplot(data = filter(takeover_state, TTLC < 10, RT > 0), aes(x = TTLC, y=RT, col = factor(cogload))) + 
-  geom_point() +
-  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load") 
-
-ggplot(data = filter(takeover_state, TTLC < 10, RT > 0), aes(x = sb_mirrored, y=RT, col = factor(failure_type))) + 
-  geom_point() +
-  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") 
-
-
-ggplot(data = filter(takeover_state, TTLC < 10, RT > 0), aes(x = TTLC, y=RT, col = factor(failure_type))) + 
-  geom_point() +
-  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") 
-
-
-``` 
- 
 <!-- 
 After discussing with Richard we decided that some regression analysis was needed with first, second and third order perceptual variables to see what combination of measures best predicts RT.
 
 Another measure in there could be the trial type at n-1. For example, if there was a sudden trial preceding a benign trial, it is probably more likely that they would take over earlier than usual in the benign trial. To examine this you want to striate the TTLC by RT plot with N-1 failure_type.
 
 A useful plot might be TTLC and/or Steering Bias by Steering magnitude.
+
+31/05. Jami Discussion about the importance of orientation as well as the lane position. We concluded that this is captured within sb_change. And that lane position and sb_change should be inputted to the multiple regression independently of TTLC, because the TTLC assumes a particular relationship within the calculation. 
 
 -->
 
