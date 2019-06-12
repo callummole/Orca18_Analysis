@@ -32,6 +32,8 @@ library("tidyverse")
 library(magrittr) #for extra pipe functions
 library(cowplot)
 library("wesanderson")
+library(brms)
+library(tidybayes)
 
 #theme for plots on TRANSITION grant.
 theme_transition_report <- theme_classic() +
@@ -1343,7 +1345,196 @@ So far we have examined the speed of takeover and aggression of the initial stee
 
 With this in mind we proceed to conduct regression analysis with variables from the scene as continuous predictors, rather than with failure_type as categorical predictors. In the first instance the RT~takeover~ is predicted from the state of the world at .25 s before the switch to manual mode (to allow for execution delays). Two variables are chosen for a first pass: lane position and change in lane position.
 
-```{r modelling RT with regression, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=6,fig.cap="Fig 13.X"}
+```{r calculate delayed state, echo=FALSE, message=FALSE, warning=FALSE}
+
+delay = .25
+takeover_state_delayed <- steergazedata %>%
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + OnsetTime - delay)) %>% 
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = first(SB_change),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = first(RT),
+            TTLC = first(TTLC),
+            bend = first(bend),
+            ppid = first(ppid),
+            SWA_max = max(SWA_mirrored, na.rm = T),
+            autofile = first(AutoFile),)
+
+
+```
+
+```{r create trial history, echo=FALSE, message=FALSE, warning=FALSE}
+
+#group by trial id and start the first exp_timestamp.
+#then order by exp_timestamp.
+#then trim the last, add an NA to the front.
+#add it in to trial averages.
+ts_exps <- steergazedata %>%
+  ungroup() %>% 
+  filter(AutoFlag == FALSE) %>% 
+  group_by(ppid, trialid) %>%
+  summarise(ts_exp = first(timestamp_exp),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            rads = first(radii),
+            RT = first(RT),
+            TTLC = first(TTLC),
+            SWA_max = max(SWA_mirrored, na.rm = T))
+
+shiftvector <- function(x){
+  
+  #shift vector forward one.
+  x = prepend(x,NA)
+  x = x[-length(x)]
+  
+}
+
+ts_exps <- ts_exps %>% 
+  group_by(ppid) %>% 
+  arrange(ts_exp) %>% 
+  mutate(cogload_hist = shiftvector(cogload),
+         failure_type_hist = shiftvector(failure_type),
+         onset_hist = shiftvector(onset),
+         rads_hist = shiftvector(rads))
+  
+ts_exps <- ts_exps %>%
+  arrange(ppid)
+
+levels(ts_exps$failure_type)
+levels(ts_exps$cogload)
+
+#1 = Sudden, 2 = Gradual, 3 = Benign
+#1 = Easy, 2 = Hard, 3 = None.
+
+ggplot(data = filter(ts_exps, TTLC < 10, RT >0), aes(x = RT, group = factor(failure_type_hist), col = factor(failure_type_hist))) + 
+  geom_density(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type History")  +
+  theme_transition_report
+
+
+```
+
+
+```{r basic regression modelling of RT, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+
+
+#ggplot(takeover_state_delayed, aes(x = RT)) + geom_density()
+#only model failure types with a 100% takeover rate.
+data <- takeover_state_delayed %>% 
+  filter(failure_type != "Benign", RT > 0)
+
+#scale your variables by centering then dividing by two standard deviations http://www.stat.columbia.edu/~gelman/research/unpublished/standardizing.pdf
+data <- data %>% 
+  mutate(sb_mirrored.z = (sb_mirrored - mean(sb_mirrored)) / (2 * sd(sb_mirrored)),
+         sb_change.z = (sb_change - mean(sb_change)) / (2 * sd(sb_change)),
+         TTLC.z = (TTLC - mean(TTLC) / (2 * sd(TTLC))))
+
+cor(data$sb_mirrored.z, data$sb_change.z)
+cor(data$sb_mirrored.z, data$RT)
+cor(data$RT, data$sb_change.z)
+
+#ggplot(data, aes(x = RT)) + geom_density()
+
+m_rt_gauss = brm(RT ~ sb_mirrored.z * sb_change.z, data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+save(m_rt, file ="m_rt.rda")
+
+m_rt_logn = brm(RT ~ sb_mirrored.z * sb_change.z, data = data,
+            family = lognormal(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+
+m_rt_weib = brm(RT ~ sb_mirrored.z * sb_change.z, data = data,
+            family = weibull(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+print(m_rt_gauss)
+pp_check(m_rt_gauss) #doesn't seem to capture either of the peaks very well. 
+pp_check(m_rt_logn)
+pp_check(m_rt_weib)
+
+loo(m_rt_gauss, m_rt_logn, m_rt_weib)
+loo_model_weights(m_rt_gauss, m_rt_logn, m_rt_weib)
+
+#gauss clearly better.
+
+m_rt_gauss_ppid = brm(RT ~ sb_mirrored.z * sb_change.z + (1 | ppid), data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  
+loo(m_rt_gauss, m_rt_gauss_ppid)
+loo_model_weights(m_rt_gauss, m_rt_gauss_ppid)
+pp_check(m_rt_gauss_ppid)
+#non hierarchical appears to be better.
+
+#plot model output.
+plot(m_rt_gauss)
+plot(marginal_effects(m_rt_gauss, effects = "sb_mirrored.z:sb_change.z"))
+plot(marginal_effects(m_rt_gauss, effects = "sb_mirrored.z"))
+plot(marginal_effects(m_rt_gauss, effects = "sb_change.z"))
+
+#let's plot it against the raw data. 
+fitted_RT_estimates <- as.data.frame(fitted(m_rt_gauss, re_formula = NA))
+
+#plot against actual data. 
+
+data$predicted <- fitted_RT_estimates$Estimate
+ggplot(data = data, aes(x = RT)) + geom_density(col = "black") +
+  geom_density(data = fitted_RT_estimates, aes(x = Estimate), col = "blue")
+
+ggplot(data = data, aes(x = RT, y = predicted)) + geom_point() +
+  geom_abline(slope=1)
+
+print(m_rt_gauss)
+
+
+m_rt_sb <- brm(RT ~ sb_mirrored.z, data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+pp_check(m_rt_sb)
+
+m_rt_sb_ch <- brm(RT ~ sb_mirrored.z + sb_change.z, data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+pp_check(m_rt_sb_ch)
+
+pp_check(m_rt_gauss)
+
+loo(m_rt_sb, m_rt_sb_ch, m_rt_gauss)
+loo_model_weights(m_rt_sb, m_rt_sb_ch, m_rt_gauss)
+
+#let's fit the same model for benign failures as well. 
+
+#all failures definitely do not work. Takeover in non-critical failures needs to be modelled differently. 
+data_allfailures <- takeover_state_delayed %>% 
+  filter(RT > 0, sb_mirrored < 0)
+
+data_allfailures <- data_allfailures %>% 
+  mutate(sb_mirrored.z = (sb_mirrored - mean(sb_mirrored)) / (2 * sd(sb_mirrored)),
+         sb_change.z = (sb_change - mean(sb_change)) / (2 * sd(sb_change)))
+
+m_rt_allfailures = brm(RT ~ sb_mirrored.z * sb_change.z, data = data_allfailures,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+print(m_rt_allfailures)
+plot(marginal_effects(m_rt_allfailures, effects = "sb_mirrored.z:sb_change.z"))
+pp_check(m_rt_allfailures)
+
+
 
 ```
 

@@ -8,3 +8,4 @@ Post-Processing/Temp/*
 .Rhistory
 *.rds
 *.xlsx
+*nb.html

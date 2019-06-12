@@ -1,0 +1,1544 @@
+---
+title: 'Silent Failures in Automation. Pilot dataset descriptive plotting and re-design recommendations'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document is a report for on the first run of the pre-registration https://osf.io/s6vam/. The purpose of this report is to give a coherent description of the data so that design decisions for follow-on studies can be traced. The experiment examines silent failures in a highly controlled setting. Each trial starts with automated steering. In some trials a bias is introduced that causes the vehicle to veer off the road either suddenly (within 1.5 s) or gradually (~ 4 s). Participants are required to keep within the road edges and intervene if they feel that it is necessary. They complete the steering task on two bend radii, sharp (40 m) or gradual (80 m), without distraction or with an easy or difficult distraction.
+
+#### Terminology
+
+- The bias is to yaw-rate, so introduces error by causing the vehicle to understeer or oversteer. Effectively, the manipulation biases the mapping between steering angle - which does not change - and yaw-rate, which does change. Therefore we will henceforth call this error _Steering Angle Bias_ (SAB).
+
+- SAB is introduced in _all_ trials, though in half the trials the SAB is not large enough to cause the vehicle to leave the road (though there will be some drift). It is confusing to call the 'stay on road' trials 'no failure' trial (or 'None' failure type). Instead, the levels of Failure Type will be _Sudden_ (rapidly drifts off road, requiring intervention), _Gradual_ (slowly drifts off road, requiring intervention), and _Benign_ (may experience some drift but it does not require intervention).
+
+- The different Cognitive Load levels will be _Hard_ (three targets), _Easy_ (one target), or _None_ (no heard letters).
+
+- Bend levels will be referred to by their radii, _40 m_ or _80 m_.
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+library(magrittr) #for extra pipe functions
+library(cowplot)
+library("wesanderson")
+library(brms)
+library(tidybayes)
+
+#theme for plots on TRANSITION grant.
+theme_transition_report <- theme_classic() +
+  theme(strip.background = element_rect(fill=NA,color=NA), 
+        strip.text = element_text(face="bold",colour="black",size="12"), 
+        axis.title = element_text(face="bold",colour="black",size="12"),
+        axis.text.x = element_text(vjust=-.5),
+        axis.text.y = element_text(vjust=.5),
+        axis.text = element_text(face="plain",colour="black",size="10"),
+        legend.text = element_text(face="plain",colour="black",size="10"),
+        legend.title = element_text(face="bold",colour="black",size="12"),
+        legend.key = element_blank()
+        #panel.grid.major.y = element_line(color="grey85",size=.2, linetype = 2)
+        )
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/Users/psccmo/Orca18_Analysis/Post-Processing/")
+
+#load steergaze data
+
+loadsteergazedata <- function(){
+  steergazedata <- readRDS("orca_steergazedata.rds")  
+  
+  steergazedata <- steergazedata %>% 
+  mutate(bend = ifelse(trialtype_signed < 0, "left", "right"))
+  
+  steergazedata <- steergazedata %>% 
+  rename(SWV = SWA) %>% 
+  mutate(SWA = SWV * 90)
+
+  #mirror data
+  steergazedata <- steergazedata %>% 
+  mutate(world_x_mirrored = if_else(bend == "left", World_x * -1, World_x),
+         hangle_mirrored = if_else(bend == "left", hangle * -1, hangle),
+         SWA_mirrored = if_else(bend == "left", SWA * -1, SWA),
+         SWV_mirrored = if_else(bend == "left", SWV * -1, SWV),
+         SB_mirrored = if_else(bend == "left", SteeringBias * -1, SteeringBias))
+  
+  
+  #unsophisticated calculation of TTC using rate of change in steering bias
+  calc_TTC <- function(SB_mirrored, SB_change){
+  
+    #need to incorporate the proximity to road edges and direction of travel.
+    
+    SB_mirrored <- array(SB_mirrored) #needs to be an array to use apply
+    
+    road_edges <- c(-1.5, 1.5)
+    
+    distance_to_edges <- apply(SB_mirrored, 1, function(x) road_edges - x)
+    
+    TTLCs <- apply(distance_to_edges,1, function(x) x / (SB_change * 60))
+    
+    TTLC <- apply(TTLCs, 1, max)
+    
+    return(TTLC)
+      
+  }
+    
+  #add ttlc
+  steergazedata <- steergazedata %>% 
+  mutate(SB_change = prepend(diff(SB_mirrored), NA),
+         TTLC = calc_TTC(SB_mirrored, SB_change)
+         )
+  
+  steergazedata$ppid <- as.factor(steergazedata$ppid)
+  steergazedata$radius <- as.factor(steergazedata$radius)
+  steergazedata$yawrate_offset <- as.factor(steergazedata$yawrate_offset)
+  steergazedata$cogload <- as.factor(steergazedata$cogload)
+    
+  #create new column called failure type.
+  steergazedata <- steergazedata %>% 
+  mutate(failure_type = yawrate_offset)
+
+  
+  #refactor failure_type
+  levels(steergazedata$failure_type)[1] = "Sudden"
+  levels(steergazedata$failure_type)[2] = "Gradual"
+  levels(steergazedata$failure_type)[3] = "Benign"
+  levels(steergazedata$failure_type)[4] = "Benign"
+  
+  
+  #add RT and disengage flag.
+  disengage_RT <- function(onsettime, timestamp_trial, autoflag){
+
+    #pick first frame where autoflag == false, then take the timestamp and minus the onset_time
+    auto_false <- which(autoflag == "FALSE")
+    disengage_index <- first(auto_false)
+    disengage_trialtime <- timestamp_trial[disengage_index]
+    onset_time <- first(onsettime)
+    RT <- disengage_trialtime - onset_time #can be negative
+    return(RT)
+    
+  }
+    
+  steergazedata <- steergazedata  %>% 
+  group_by(ppid, radius, yawrate_offset, cogload, block, count) %>% 
+  mutate(RT = disengage_RT(OnsetTime, timestamp_trial, AutoFlag),
+        disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
+        )
+
+  
+  steergazedata <- steergazedata %>% 
+    mutate(trialid = paste(ppid, radius, yawrate_offset, cogload, block, count, sep = "_"))
+
+  return(steergazedata)
+}
+
+steergazedata <- loadsteergazedata()
+
+#head(steergazedata)
+
+#save it as csv for jami.
+#write_csv(steergazedata, "orca_raw_longformat.csv")
+
+
+
+
+```
+
+
+### Cognitive Load difficulty.
+
+```{r load cognitive task data, echo=FALSE, message=FALSE, warning=FALSE}
+
+if ((!file.exists("end_of_trial_cogtask.csv")) | (!file.exists("within_trial_cogtask.csv"))){
+
+
+  file_path <- "D:/ORCA_DATA/Data" #filepath (~ means to look in user's working directory)
+  file_lists <- list(list.files(file_path, pattern = "Orca18_Distractor_1_(p|P)"),
+                       list.files(file_path, pattern = "Orca18_Distractor_2_(p|P)")) #separate into two blocks so I can loop through.
+  EoT <- "EndofTrial" #text at end of EndofTrial files. These are the recorded counts at the end of the trial.
+  WiT <- "WithinTrial" #text at end of WithinTrial files. These are the RT responses within a trial. 
+  
+  block = 0
+  
+  #assign dataframes
+  
+  EoT_dataframe <- data.frame(X=integer(),
+                   ppid=character(), 
+                   targetoccurence=double(), 
+                   targetnumber=integer(),
+                   trialn = integer(),
+                   EoTScore1 = double(),
+                   TargetCount1 = double(),
+                   EoTScore2 = double(),
+                   TargetCount2 = double(),
+                   EoTScore3 = double(),
+                   TargetCount3 = double(),
+                   block = integer())
+  
+  WiT_dataframe <- data.frame(X=integer(),
+                   ppid=character(), 
+                   targetoccurence=double(), 
+                   targetnumber=integer(),
+                   trialn = integer(),
+                   CurrentAudio = character(),
+                   RT = double(),
+                   ResponseCategory = integer(),
+                   Target1 = character(),
+                   Target2 = character(),
+                   Target3 = character(),
+                   block = integer())
+  
+  
+  
+  for (file_block in file_lists){ #loop through  each block so you can add a block number and add 6 to trial number.
+    
+    #we want to add 6 to the second block trialn.
+    block = block + 1
+    if (block == 1){
+      trial_add = 0
+    } else {
+      trial_add = 6
+    }
+    
+    for (file_name in file_block){
+      
+      #print(file_name)
+      
+      #separate dataframe if EoT or WiT
+      
+      if (grepl(EoT, file_name)){
+      
+        EoT_newdata <- read.csv(paste(file_path,'/',file_name, sep = "")) #if already exists add to data frame.
+        
+        #head(EoT_newdata)
+        
+        EoT_newdata <- EoT_newdata %>% 
+          mutate(trialn = trialn + trial_add,
+                 block = block)
+        
+        EoT_dataframe <- dplyr::union(EoT_newdata, EoT_dataframe) #add to existing datframe  
+          
+              
+      } else if  (grepl(WiT, file_name)) {
+        WiT_newdata <- read.csv(paste(file_path,'/',file_name, sep = "")) #load WithinTrial data
+        
+        WiT_newdata <- WiT_newdata %>% 
+          mutate(trialn = trialn + trial_add,
+                 block = block)
+        
+        WiT_dataframe <- dplyr::union(WiT_newdata, WiT_dataframe) #add to existing datframe  
+          
+      }
+    }
+  }
+    
+  write_csv(EoT_dataframe,"end_of_trial_cogtask.csv")
+  write_csv(WiT_dataframe,"within_trial_cogtask.csv")
+  
+} else {
+  EoT_dataframe <- read_csv("end_of_trial_cogtask.csv")
+  WiT_dataframe <- read_csv("within_trial_cogtask.csv")
+}
+
+
+```
+
+
+
+```{r calculate measures, echo=FALSE, message=FALSE, warning=FALSE}
+  
+##### WITHIN TRIAL MEASURES ########
+
+
+WiT_RTfiltered <- filter(WiT_dataframe, RT == -1 | RT >.1) # Returns dataframe for rows where RT was >.1 or -1 (no response) 
+
+WiT_TruePos <- filter(WiT_RTfiltered, ResponseCategory == 1) #create new dataframe only including true positives
+  
+SummaryRTs <- WiT_TruePos %>% group_by(ppid, trialn) %>% summarise(
+  targetnumber = first(targetnumber),
+  targetoccurence = first(targetoccurence),
+  meanRT = mean(RT),
+  stdRT = sd(RT))
+
+#Calculate the amount of each type of responses
+SummaryCounts <- WiT_RTfiltered %>% group_by(ppid, trialn) %>% summarise(
+  targetnumber = first(targetnumber),
+  targetoccurence = first(targetoccurence),
+  TruePos = sum(ResponseCategory==1),
+  FalseNeg = sum(ResponseCategory==2), 
+  FalsePos = sum(ResponseCategory==3),
+  TrueNeg = sum(ResponseCategory==4), 
+  TotalResponses=n())
+
+SummaryCounts <- mutate(SummaryCounts, Perc_Correct = (TruePos + TrueNeg)/ TotalResponses)
+
+
+####### END OF TRIAL MEASURES ########
+  
+#First, replace NA with Zeros for the following code to work. This means I can use the same code on all trials, even though some may have different amounts of targets.
+EoT_dataframe[is.na(EoT_dataframe)] <- 0
+
+#Calculate the error for each target.
+EoT_dataframe <- mutate(EoT_dataframe, 
+                        Error1 = EoTScore1 - TargetCount1,
+                        Error2 = EoTScore2 - TargetCount2,
+                        Error3 = EoTScore3 - TargetCount3)
+
+#Calculate the total absolute error and divide by targetnumber
+EoT_dataframe <- EoT_dataframe %>% 
+  mutate(totalcounterror = abs(Error1) + abs(Error2) + abs(Error3),
+         totaltargets = abs(TargetCount1) + abs(TargetCount2) + abs(TargetCount3),
+         avgcounterror = totalcounterror / targetnumber,
+         proportionalcounterror = totalcounterror / totaltargets
+         )
+
+
+########### MERGE DATAFRAMES ############
+
+#merges dataframes for trial measures
+SummaryTrialMeasures <- merge(SummaryCounts, SummaryRTs, by = c("ppid","trialn"), all.x = TRUE)
+
+#only select the columns we are interested in 
+EoT_avgerror <- select(EoT_dataframe, ppid, trialn, targetnumber, targetoccurence, totalcounterror, totaltargets, avgcounterror, proportionalcounterror)
+
+#merge within trial and EoT measures together
+SummaryMeasures <- merge(SummaryTrialMeasures, EoT_avgerror, by = c("ppid","trialn"))
+
+#drop some extra columns created by merging for some unimportant reasons
+SummaryMeasures <- select(SummaryMeasures, -targetoccurence.x, -targetnumber.x, -targetoccurence.y, -targetnumber.y)
+
+#head(SummaryMeasures)
+```
+
+Fig 1 plots two indices of cognitive performance for the cognitive task when the driver was not steering: _Percentage Correct_ (PC, True positives + True negatives / total letters heard); _Reaction Time_ (RT, reaction time for True positives).
+
+```{r plot Cognitive Task Performance, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. Cognitive Task Performance. A) Percentage Correct. B) Reaction Time. C-D) Absolute Count Error"}
+
+# box plots for absolute count error.
+
+#so I do not repeat myself below
+addscale <- scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load", labels = c("1"="Easy", "3"="Hard"))
+changexlabels <- scale_x_discrete(name = "Cognitive Load", labels=c("1" = "Easy", "3" = "Hard"))
+
+#Example 2: plot ACE for each targetnumber
+p_rt <- ggplot(data=SummaryMeasures, aes(y=meanRT, x=factor(targetnumber), fill = factor(targetnumber))) + 
+  geom_boxplot(outlier.size = 1) +
+  addscale +
+  theme_transition_report +
+  changexlabels + ylab ("Mean RT for True Positives (s)")
+
+#show(p_rt)
+  
+p_pc <- ggplot(data=SummaryMeasures, aes(y=Perc_Correct, x=factor(targetnumber), fill = factor(targetnumber))) + 
+  geom_boxplot(outlier.size = 1) +
+  addscale +
+  theme_transition_report +
+  changexlabels + ylab ("Percentage of Targets Responded Correctly (%)")
+
+p_ace <- ggplot(data=SummaryMeasures, aes(y=proportionalcounterror, x=factor(targetnumber), fill = factor(targetnumber))) + 
+  geom_boxplot(outlier.size = 1) +
+  addscale +
+  theme_transition_report +
+  changexlabels + ylab ("Average proportional error in estimated count")
+
+
+legend <- get_legend(p_rt)
+#p <- plot_grid(p_rt + theme(legend.position="none"), 
+#               p_pc + theme(legend.position="none"), 
+#               p_ace + theme(legend.position="none"),
+#               labels = c("A", "B","C"), nrow=1)
+#p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+#show(p_legend)
+
+p_report <- plot_grid(p_rt + theme(legend.position="none"), 
+              p_pc + theme(legend.position="none"), 
+              labels = c("A", "B"), nrow=1)
+p_report <- plot_grid(p_report, legend, rel_widths = c(4,.5))
+show(p_report)
+
+
+```
+ 
+Fig 1 shows that people respond differently to each Cognitive Load condition. Participants react slower to heard target letters if they are listening for three targets rather than only one target (Fig 2A). Participants also experienced greater difficulty in deciding the appropriate response when there were three targets as compared to when there was only one (Fig 2B). The next section will examine how this gets reflected in steering measures.
+
+### Driver Takeover.
+
+The pre-registration specifies two hypotheses relating to taking over control of the vehicle:
+
+-	__H1__: Participants will react slower to silent failures as cognitive load increases (i.e. more time will have elapsed from the steering angle bias to the driver disengaging the automation).
+
+-	__H2__: Participants will react with less aggression as cognitive load increases, bringing the vehicle back to the centre more slowly (i.e. they will be smoother and make less corrections). 
+
+These two hypotheses will be analysed in turn.
+
+#### H1: Speed of take-over
+
+The pre-registration states that two measures will be calculated:
+
+- RT from SAB onset to disengagement of the system via a button press (can be negative if they take over before the SAB is introduced). This measure will be referred to as RT~takeover~.
+
+- RT from SAB onset to first steering movement (RT~steer~).
+
+These two measures are expected to correlate, and deciding on criteria for the first steering movement is non-trivial, so for the purpose of this brief report only RT~takeover~ is reported. 
+
+
+```{r calculate RT takeover measure, echo=FALSE, message=FALSE, warning=FALSE}
+
+### need to calculate RTs.
+if (!exists("steergazedata")){
+  #load steergaze data
+  steergazedata <- loadsteergazedata()
+  
+}
+
+#RT and disengaged are already calculated.
+steergaze_trialavgs <- steergazedata  %>% 
+  ungroup() %>% 
+  group_by(ppid, radius, yawrate_offset, cogload, block, count) %>% 
+  summarize(RT = first(RT),
+            disengaged = first(disengaged), #whether or not they actually took over.
+            failure_type = first(failure_type),
+            premature = ifelse(RT <= 0, 1, 0))
+
+#head(steergaze_trialavgs)
+
+#disengage %
+disengage_perc <- steergaze_trialavgs %>% 
+  ungroup() %>% 
+  filter(failure_type == "Benign") %>% 
+  summarise(pc = sum(disengaged) / n()) 
+
+#negative RT %
+premature_perc <- steergaze_trialavgs %>% 
+  ungroup() %>% 
+  summarise(pc = sum(na.omit(premature)) / n()) 
+  
+
+```
+
+```{r plotting RT takeover, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 2. RT takeover across failure types"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+
+ggplot(steergaze_trialavgs, aes(x = RT, group = factor(failure_type), fill = factor(failure_type))) +
+  geom_density(alpha = .8) +
+  xlim(c(0,10)) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)"))
+
+```
+
+Fig 2 shows massive differences in how quickly drivers disengage the automation after SAB onset (using positive RTs only). In the _Benign_ condition drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. Since drivers react at such different speeds (therefore have very different scales) across the three failure types the failure type conditions will be plotted separately.
+
+```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 3. RT takeover across cognitive loads"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+
+p_sudden <- ggplot(filter(steergaze_trialavgs, failure_type == "Sudden"), 
+                   aes(x = RT, group = factor(cogload), col = factor(cogload), fill = factor(cogload))) +
+  geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
+  geom_density(size = 1.2, fill = NA) +
+  xlim(c(0,NA)) +
+  #facet_grid(radius~.) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) 
+
+
+p_gradual <- ggplot(filter(steergaze_trialavgs, failure_type == "Gradual"), 
+                   aes(x = RT, group = factor(cogload), col = factor(cogload), fill = factor(cogload))) +
+  geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
+  geom_density(size = 1.2, fill = NA) +
+  xlim(c(0,NA)) +
+  #facet_grid(radius~.) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) 
+
+p_benign <- ggplot(filter(steergaze_trialavgs, failure_type == "Benign"), 
+                   aes(x = RT, group = factor(cogload), col = factor(cogload), fill = factor(cogload))) +
+  geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
+  geom_density(size = 1.2, fill = NA) +
+  xlim(c(0,NA)) +
+  #facet_grid(radius~.) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1"), name = "Cognitive Load") +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) 
+
+legend <- get_legend(p_sudden)
+p_rt_takeover <- plot_grid(p_sudden + theme(legend.position="none"), 
+               p_gradual + theme(legend.position="none"), 
+               p_benign + theme(legend.position="none"),
+               labels = c("Sudden", "Gradual","Benign"), nrow=1, hjust = -1)
+p_rt_takeover_legend <- plot_grid(p_rt_takeover, legend, rel_widths = c(4,.5))
+show(p_rt_takeover_legend)
+
+
+#calculate modes for reporting in text.
+getmode <- function(v, binwidth = NULL) {
+  
+  #v is a vector. binwidth is the granularity.
+  v <- na.omit(v)
+  if (!is.null(binwidth)){
+    v <- ceiling(v / binwidth) * binwidth  
+  }
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+  
+}
+
+
+mode_sudden_none <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "None")$RT, binwidth = .01)
+mode_sudden_easy <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Easy")$RT, binwidth = .01)
+mode_sudden_hard <- getmode(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Hard")$RT, binwidth = .01)
+
+sd_sudden_none <- sd(na.omit(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "None", RT > 0)$RT)) 
+sd_sudden_easy <- sd(na.omit(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Easy", RT > 0)$RT)) 
+sd_sudden_hard <- sd(na.omit(filter(steergaze_trialavgs, failure_type == "Sudden",cogload == "Hard", RT > 0)$RT)) 
+
+median_gradual_none <- median(na.omit(filter(steergaze_trialavgs, failure_type == "Gradual",cogload == "None", RT > 0)$RT)) 
+median_gradual_easy <- median(na.omit(filter(steergaze_trialavgs, failure_type == "Gradual",cogload == "Easy", RT > 0)$RT)) 
+median_gradual_hard <- median(na.omit(filter(steergaze_trialavgs, failure_type == "Gradual",cogload == "Hard", RT > 0)$RT))
+
+```
+
+Fig 3 shows cognitive load differences in RT~takeover~ within failure type (using positive RTs only, collapsed across bend radii). For Sudden failures (leftmost in Fig 3) there are clear difference between None, Easy, and Hard. People switch to manual mode quickest when not performing a distractor task; they switch slowest when the distractor task is more difficult. However, note that effect size is small: the peaks are only about .1s apart (modes are `r mode_sudden_none` s, `r mode_sudden_easy` s, and `r mode_sudden_hard` s respectively) with SDs of approximately .2s. This difference is less pronounced for Gradual failures (middle) and Benign failures (right). In the Gradual Failure and Benign failure conditions the data is spread out over a wider range than in Sudden failures. Nevertheless, for _Gradual_ failures the median RT for No load seems to be earlier (`r round(median_gradual_none, 2)` s) than the _Easy_ (`r round(median_gradual_easy, 2)` s) and _Hard_ (`r round(median_gradual_hard, 2)` s) cognitive load conditions.
+
+Fig 5, below, plots RT~takeover~ by bend radii for each failure type. Differences in RT~takeover~ between bend radii, if there are any, appear small.  
+
+```{r plotting RT takeover within radius, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 5. RT takeover across bend radii"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+
+p_radius <- ggplot(filter(steergaze_trialavgs), 
+                   aes(x = RT, group = factor(radius), col = factor(radius), fill = factor(radius))) +
+  geom_histogram(alpha = .2, position = "identity", bins = 40, aes(y= ..density..), col =NA) +
+  geom_density(size = 1.2, fill = NA) +
+  xlim(c(0,NA)) +
+  facet_grid(.~failure_type, scales="free") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n=2), name = "Bend Radius") +
+  scale_colour_manual(values = wes_palette("Darjeeling1", n=2), name = "Bend Radius") +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) 
+
+show(p_radius)
+
+```
+
+__H1 Summary__: Reaction time to silent failures does indeed increase as cognitive load increases, though this effect is small and depends on the severity of the failure.
+
+The next section will examine the steering response after takeover.
+
+
+#### H2: Steering Response
+
+Firstly, we plot some trajectories to understand the constraints the driver is placed under. To make the failures unpredictable there are 6 potential automation trajectories, with onset times of the SAB varying between 5 and 9. This variability makes for messy plots if plotting all trajectories in cartesian coordinates. Therefore, Fig 6 fixes the onset time (=5 s, blue star in Fig 6) and the bend radius (=40 m). You can see in Fig 6 that the potential automation trajectories all similarly hug the midline. It is also clear that the _Sudden_ take-overs are tightly bunched compared to the _Gradual_ and _Benign_ (see also the RTs in Fig 4). Note that in the _Gradual_ panel there is one trial where the take-over happens before the SAB is introduced. This happens in `r round(as.double(premature_perc) * 100)` % of trials.
+
+<!-- Steering section plan:
+
+Filter out trials where the participant took over.
+1) Average traj plots with takeover points dotted on.
+2) Steering bias plots from onset of A) Different failures, B) cognitive load within failures, C) Radii across failures
+This will lead naturally into looking at SWA plots and discussing limits of SWA. People overshoot the correction in sudden because SWA is capped so they cannot turn quick enough (the 'true SWA' is likely over 90 degrees).
+3) SWA plots of different levels of cognitive load within failures. (velocity / variability are contaminated by capped values where the derivative = 0) 
+4) So what are they actually responding to? plot TTLC at take-over. Highlight modelling efforts.
+
+
+The strength of the response is inter-related with the yaw-rate offset. TTC is also inter-related. Since later RTs = more aggressive response.
+
+-->
+
+
+```{r plotting trajectories, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 6. Trajectories with a fixed onset time (at 5 seconds) and for bend radius of 40 m. Blue star is the time of onset. Dots are the time of take-over"}
+
+#B) Plots of sudden take-overs with take-over state dotted.
+#C) Plots of gradual take-overs with take-over state dotted.
+#D) Plots of no failure take-overs with take-over state dotted.
+
+
+#load track data
+track_80 <- read.csv("track_with_edges_orca_80.csv")
+track_40 <- read.csv("track_with_edges_orca_40.csv")
+
+#calculate states at takeover
+takeover_state <- steergazedata %>%
+  ungroup() %>% 
+  filter(AutoFlag == F) %>% 
+  group_by(trialid) %>% 
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = SB_mirrored[1] - SB_mirrored[2],
+            ttlc = (1.5 - abs(sb_mirrored)) / (abs(sb_change)*60),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = time - onset,
+            bend = first(bend),
+            ppid = first(ppid),
+            autofile = first(AutoFile))
+
+
+#selection <- select_autofile_onset(steergazedata)
+
+#actually let's use the most common file.
+selection <- c(getmode(steergazedata$AutoFile), getmode(steergazedata$OnsetTime))
+
+
+takeover_selection <- takeover_state %>% 
+  filter(onset == selection[2],
+         rads == 40)
+
+fulltrials_selection <- steergazedata %>% 
+  filter(OnsetTime == selection[2],
+         radius == 40)
+
+
+onset_point <- steergazedata %>%
+  ungroup() %>% 
+  filter(OnsetTime == selection[2],
+         radius == 40) %>% 
+  group_by(AutoFile) %>% 
+  filter(timestamp_trial > OnsetTime) %>% 
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z))
+            
+#plot 
+p_selection <- ggplot(data = fulltrials_selection, aes(x = world_x_mirrored, y= World_z, col = failure_type)) +
+  geom_path(aes(group = trialid), alpha = 1) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  geom_path(data = track_40, aes(x = midlinex, y=midlinez), colour = "grey", linetype = "dashed") +
+  geom_path(data = track_40, aes(x = outsidex, y=outsidez), colour = "grey") +
+  geom_path(data = track_40, aes(x = insidex, y=insidez), colour = "grey") +
+  xlim(c(min(track_40$outsidex), max(fulltrials_selection$world_x_mirrored))) + ylim(c(0,60)) +
+  geom_point(data = filter(takeover_selection), aes(x=x, y=z, fill = failure_type), col = "black", alpha = 1, pch=21) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  guides(fill = F) +
+  geom_point(data = onset_point, aes(x=x, y=z), pch = 8, col = "blue") +
+  facet_wrap(failure_type~.) +
+  theme_transition_report + xlab("World_x")
+
+show(p_selection)
+
+
+```
+
+Lane position allows for a better comparison of trajectories (Fig 7). Fig 7 plots the lane position immediately after switching to manual control. On average drivers seem to switch when lane position is closer to the midline in _Sudden_ failures than in _Gradual_ or _Benign_ failures. However, due to the larger SAB drivers take longer to correct for the error in lane position. The fact that drivers tend to switch at a lower lane error in _Sudden_ failures suggests that drivers may be responding to rate of change of lane position (i.e. Time to Lane Crossing, which is higher in _Sudden_ failures) rather than lane position per se. 
+
+
+```{r plotting lane position, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 7. Steering bias for different failure types. Note that to avoid plotting, oversteer SAB for Benign failures are not shown"}
+
+
+#A) Steering bias for Different failures, 
+#B) Cognitive load within failures, 
+#C) Radii within failures,
+
+#only select the trials with manual control in them.
+steergaze_manual <- steergazedata %>% 
+  filter(AutoFlag == FALSE)
+
+### Reset trial so they all start at around [0,0] 
+steergaze_manual <- steergaze_manual %>% 
+  ungroup() %>% 
+  group_by(trialid) %>%
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+
+#plot steering bias, exclude the oversteering SAB
+p_sb <- ggplot(data = filter(steergaze_manual, f < 500, yawrate_offset != .15), aes(x = f / 60, y= SB_mirrored, col = factor(failure_type))) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  geom_smooth(se= F, size = 1.5, method = "loess", span = .1) +
+ scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  geom_hline(yintercept = c(-1.5, 1.5), col = "grey", size = 1.5, linetype = "dashed") +
+  ylim(c(-2,1.6)) +
+  geom_hline(yintercept = 0, col = "black", linetype = "dashed") +
+  ylab("Lane Position (m)") + xlab("Time (s)") +
+  theme_transition_report
+  
+
+show(p_sb)
+
+
+```
+
+Fig 8 stratifies cognitive loads within failure types. From the average trajectories it appears that drivers tend to correct for errors more quickly when they are not cognitive loaded. This is particularly true for _Sudden_ failures and to a lesser extent _Gradual_ failures. There are not many trials included in the _Benign_ plot so I would caution against drawing any averaged conclusions. Correcting for errors more slowly when cognitively loaded was a feature of Wilkie et al., 2019. However, in that experiment takeovers starting from the same lane position each time. In this experiment if drivers were slower to takeover more error would have accrued, so it is plausible that differences in lane position over time (Fig 8) could be partly due to RT differences between cognitive load conditions (see Fig 4). 
+
+```{r plotting cog load within, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 8. Steering bias for cogload within different failure types"}
+
+#B) Cognitive load within failures, 
+
+#C) Radii within failures,
+
+#plot steering bias
+p_sb_cogload <- ggplot(data = filter(steergaze_manual, f < 300, yawrate_offset != .15), aes(x = f / 60, y= SB_mirrored, col = factor(cogload))) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  geom_smooth(se= F, size = 1.5, method = "loess", span = .1) +
+  facet_wrap(~failure_type) +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_hline(yintercept = c(-1.5, 1.5), col = "grey", size = 1.5, linetype = "dashed") +
+  ylim(c(-2,1.6)) +
+  geom_hline(yintercept = 0, col = "black", linetype = "dashed") +
+  ylab("Lane Position (m)") + xlab("Time (s)") +
+  theme_transition_report
+  
+
+show(p_sb_cogload)
+
+
+```
+
+
+
+```{r plotting radii within failure types, echo=FALSE, eval=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=5,fig.cap="Fig 9. Steering bias for Radii within failure types"}
+
+
+#B) Cognitive load within failures, 
+
+#C) Radii within failures,
+
+
+
+#plot steering bias
+p_sb_radii <- ggplot(data = filter(steergaze_manual, f < 300, yawrate_offset != .15), aes(x = f, y= SB_mirrored, col = factor(radii))) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  geom_smooth(se= F, size = 1.5) +
+  facet_wrap(~failure_type) +
+  scale_colour_manual(values = wes_palette("Darjeeling1",n=2), name = "Bend Radius") +
+  geom_hline(yintercept = c(-1.5, 1.5), col = "grey", size = 1.5, linetype = "dashed") +
+  ylim(c(-2,1.6)) +
+  geom_hline(yintercept = 0, col = "black", linetype = "dashed") +
+  theme_transition_report
+  
+
+show(p_sb_radii)
+
+
+```
+
+To disentangle whether the separation between average trajectories for 'No Load' and 'Loaded' conditions is due to less aggressive steering in the Cognitively loaded conditions we can take a look at the steering wheel angle plots over time (Fig 9). If the differences in lane position are _only_ driven by delayed RTs we would expect the average SWA traces to be overlapping (i.e. on average, identical steering responses across cognitive load conditions irrespective of small changes in initial lane position). Conversely, we might also expect a reduced (in magnitude) or delayed steering wheel angle response in cognitive load conditions, as per Wilkie et al 2019. 
+
+
+```{r plotting SWA, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 9. SWA for cogload within different failure types. The dashed line is the point of takeover"}
+
+
+#pick up .5 s before trial takeover so you can see how quickly SWA moves after takeover.
+
+delay = 1
+steergaze_manual_delay <- steergazedata %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + OnsetTime - delay))
+
+### Reset trial so they all start at around [0,0] 
+steergaze_manual_delay <- steergaze_manual_delay %>% 
+  ungroup() %>% 
+  group_by(trialid) %>%
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+
+#plot steering bias
+p_swa_cogload <- ggplot(data = filter(steergaze_manual_delay, f < 360, yawrate_offset != .15), aes(x = timestamp_zero - delay, y= SWA_mirrored, col = factor(cogload))) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  geom_smooth(se=F, size = 1.5, method="loess", span = .1) +
+  facet_wrap(radius~failure_type) +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  theme_transition_report +
+  ylim(c(0,90)) +
+  xlab("Time (s)") + ylab("Steering Wheel Angle (degrees)") +
+  geom_vline(xintercept = 0, col = "black", linetype = "dashed")
+  
+show(p_swa_cogload)
+
+
+```
+In no conditions do we see a convincing evidence of a reduced or delayed steering response when cognitively loaded (Fig 9). In _Benign_ and _Gradual_ failures (right and middle, Fig 9) the steering response seems pretty similar across cognitive load conditions, suggesting any separation in the steering bias plot could be due to reaction times.
+
+The _Sudden_ failures (left, Fig 9) require more description. The first thing to note is that the recorded steering wheel angle reaches the maximum yaw-rate. The steering wheel angle is not the true angle, it is re-calculated from a [1, -1] steering wheel value, which hits a limit at 90 degrees. Therefore, for many of the trials participants could be turning the wheel over the 90 degrees mark, yet the inputted yaw-rate into the simulation would be capped. This clearly happens for _Sudden_ failures where there is need for a sharp turn. Despite the wheel angle capping, it is interesting that experiencing _Hard_ cognitive load seems to cause greater wheel turns than _Easy_ and _None_. It is probable that this is not due to an effect of cognitive load on _steering_. Rather, it could be the combined effect of slower RTs causing greater steering demand which cannot be wholly compensated due to the capped steering wheel angle. Indeed, disentangling the indirect effects of cognitive load on steering (from increasing RTs and therefore increasing steering demand) with the direct effects of cognitive load on steering will be difficult, as steering demands correlate with RTs. The next plot examines this issue by plotting three measures of steering aggression (SWA~max~, SWA~var~, and SWA~vel~ next to RT~takeover~)
+
+```{r plot SWA variability and RT, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 10. Steering aggression measures correlated with RT. A) Maximum Steering Wheel Angle, B) Standard Deviation of Steering Wheel Angle, C) Average steering wheel velocity"}
+
+
+#pick up .5 s before trial takeover so you can see how quickly SWA moves after takeover.
+
+takeover_trialavgs <- steergaze_manual %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(n() > 180) %>% 
+  summarise(RT = first(RT),
+            SWA_sd = sd(SWA_mirrored, na.rm = T),
+            SWA_max = max(SWA_mirrored, na.rm = T),
+            SWA_vel = mean(abs(diff(SWA_mirrored) * 60), na.rm = T),
+            cogload = first(cogload),
+            rads = first(radii),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime)
+            )
+
+
+#computer correlations for the plots
+cor_SWA_RT <- takeover_trialavgs %>% 
+  ungroup() %>% 
+  filter(RT > 0) %>% 
+  group_by(failure_type) %>%
+  summarise(r_SWA_max = cor(SWA_max, RT, use = "na.or.complete", method = "pearson"),
+            r_SWA_sd = cor(SWA_sd, RT, use = "na.or.complete", method = "pearson"),
+            r_SWA_vel = cor(SWA_vel, RT, use = "na.or.complete", method = "pearson"))
+
+#plot max SWA by RT
+p_SWA_max <- ggplot(data = filter(takeover_trialavgs, RT>0), aes(x = RT, y = SWA_max, col = factor(cogload), fill = factor(cogload))) +
+  geom_point(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_smooth(se = T, method = lm) +
+  geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(15, 90))
+
+#show(p_SWA_max)
+
+p_SWA_sd <- ggplot(data = filter(takeover_trialavgs, RT>0), aes(x = RT, y = SWA_sd, col = factor(cogload), fill = factor(cogload))) +
+  geom_point(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_smooth(se = T, method = lm) +
+  geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_sd,2), sep = ""), x = c(1.5, 1.25, 4.5), y = c(10, 20, 20))) +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["var"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(0, 30))
+
+#show(p_SWA_sd)
+
+#filter SWA_vel is to exclude a couple of outliers from plotting
+p_SWA_vel <- ggplot(data = filter(takeover_trialavgs, RT>0), aes(x = RT, y = SWA_vel, col = factor(cogload), fill = factor(cogload))) +
+  geom_point(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_smooth(se = T, method = lm) +
+  geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_vel,2), sep = ""), x = c(1.5, 1.0, 4), y = c(8, 50, 50))) +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["vel"]*" ("*degree*" / s)")) +
+  expand_limits(x = c(0, 2), y = c(0, 80))
+
+#show(p_SWA_vel)
+
+legend <- get_legend(p_SWA_max)
+p <- plot_grid(p_SWA_max + theme(legend.position="none"), 
+               p_SWA_sd + theme(legend.position="none"),
+               p_SWA_vel + theme(legend.position="none"), 
+               labels = c("A", "B", "C"), nrow=3)
+p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+show(p_legend)
+
+
+#for reportiong in text
+#takeover_triallengths <- steergaze_manual %>% 
+#  ungroup() %>% 
+#  group_by(trialid) %>% 
+#  summarise(frames = n(),
+#            failure_type = first(failure_type))
+
+#print(min(takeover_triallengths$frames) / 60)
+#print(max(takeover_triallengths$frames) / 60)
+
+#ggplot(takeover_triallengths, aes(x = frames / 60, fill = failure_type)) + geom_histogram(position = "identity", alpha = .5) 
+```
+
+Fig 10 plots the maximum steering wheel angle (SWA~max~, Fig 10A) and the standard deviation of steering wheel angle (SWA~var~, Fig 10B), and the average steering wheel velocity (SWA~vel~) for the manual control period of driving. Only trials with at least three seconds of manual driving are plotted, since by this time most drivers have made their initial steering correction (see Fig 9). Trials can have a maximum of 15 seconds of driving. A higher SWA~max~ would mean that the driver executed a sharper turn. A high SWA~var~ is often considered a (bad) proxy for wiggly steering. The two measures are correlated since a higher SWA~max~ usually indicates a higher SWA~var~. Steering wheel angle velocity is arguably a better measure for 'jerkier' steering as higher SWA~vel~ values would mean a driver turned the wheel more rapidly, but in this particular dataset the measure is partly confounded by capping of the steering wheel angle, where velocity equals zero for the duration of time where the limit is hit.
+
+Reassuringly, similar trends are seen across all measures, suggesting that in our experiment these higher values on all three measures are indicative of steering corrections that are executed with greater magnitude and speed. Here we will refer to such steering corrections as _steering demand_. Fig 10 is designed to disentangle the relative contribution of RT~takeover~ and cognitive load to steering demand. It is hypothesised that a positive correlation will exist between RT~takeover~ and the steering demand measures, since the later the RT~takeover~ the closer one is to lane boundaries. It is further hypothesised, based on the literature base, that increased cognitive load might cause a _reduction_ in steering demand. If these two hypotheses did not interact, one would see a positive correlation of RT~takeover~ and steering demand, with vertically separated regression lines for each cognitive load condition. The different failure conditions are discussed in turn:
+
+- In _Sudden_ failures there is a positive correlation on all measures. In SWA~max~ and SWA~vel~ the correlation is weaker, presumably due to the capping of steering wheel angle limiting the maximum values for both measures. The coloured regression lines for separate cognitive load conditions are generally overlapping, and when they are not it seems to be due to outlying values (i.e. they are some slow responses in the _Hard_ condition). Therefore, it seems that any change in steering demand cognitive load causing lower RT~takeover~s rather than reducing the propensity to correct for errors.
+
+- In _Gradual_ failures we observe a consistent positive correlation between RT~takeover~ and steering demand. It's probable that the trend is easier to see than in _Sudden_ because the rarely hit the clipping limit for _Gradual_ failures (Fig 9), so the measures are less confounded. It is interesting that in all measures the regression line for _None_ sits slightly above the regression lines for _Hard_ and _Easy_, hinting at a direct effect of cognitive load on steering demand. However, such an effect appears to be small compared to the impact of taking over control later. 
+
+- Note that in _Benign_ failures there are not many trials plotted because trails were excluded if they contained less than three seconds of manual control. Nevertheless, taking over later does not appear to result in greater steering demand. Remember that the _Benign_ failures do not require a takeover, so it is possible that drivers sometimes switch to manual and do not make any corrections. Nor does there appear to be differences between cognitive load conditions in steering demand. 
+
+
+__H2 Summary__: I will tentatively suggest that there the direct effect of cognitive load on the aggression of the first steering response is not large enough to pay serious attention to. I propose that the speed of response (which seems to fluctuate with cognitive load) is a stronger determinant of the strength of the first steering response. 
+
+ 
+```{r plot TTLC, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=6,fig.cap="Fig 11. A) Lane position and RT takeover. B) TTLC and RT takever"}
+
+#what do I want to plot? 
+
+#TTLC @ takeover next to RT?
+#add delay? 
+takeover_state <- steergazedata %>%
+  ungroup() %>% 
+  filter(AutoFlag == FALSE) %>% 
+  group_by(trialid) %>%
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = first(SB_change),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = first(RT),
+            TTLC = first(TTLC),
+            bend = first(bend),
+            ppid = first(ppid),
+            SWA_max = max(SWA_mirrored, na.rm = T),
+            autofile = first(AutoFile))
+
+#ttlc by RT
+#ggplot(data = filter(takeover_state, TTLC < 10, RT > 0), aes(x = TTLC, y=RT, col = factor(cogload))) + 
+#  geom_point() +
+#  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load") 
+
+p_sb_RT <- ggplot(data = filter(takeover_state, TTLC < 10, RT > 0, failure_type != "Benign"), aes(x = sb_mirrored, y=RT, col = factor(failure_type))) + 
+  geom_point() +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  theme_transition_report +
+  xlab(expression("Lane Position (m)")) + ylab(expression("RT"["takeover"]*" (s)")) 
+
+
+p_sb_ttlc <- ggplot(data = filter(takeover_state, TTLC < 10, RT > 0, failure_type != "Benign"), aes(x = TTLC, y=RT, col = factor(failure_type))) + 
+  geom_point() +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  theme_transition_report +
+  xlab(expression("TTLC (s)")) + ylab(expression("RT"["takeover"]*" (s)")) 
+  
+legend <- get_legend(p_sb_RT)
+p <- plot_grid(p_sb_RT + theme(legend.position="none"),
+               p_sb_ttlc + theme(legend.position="none"),
+               labels = c("A", "B"), nrow=1)
+p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+show(p_legend)
+
+
+``` 
+
+However, the magnitude of steering corrections are not solely determined by how quickly drivers respond. Error develops at different rates in different conditions, so an identical RT~takeover~ across both _Gradual_ and _Sudden_ failure types results in different lane positions (Fig 11A) and urgency (Fig 11B) at takeover. Therefore, if one plots SWA~max~ against RT~takeover~, stratified by failure type, there are clear differences between the conditions (Fig 12A). If steering magnitude was driven solely by speed of response, we would expect both failure types to 'collapse' along the same dimension. Fig 12B (SWA~max~ by lane position and Fig 12C (SWA~max~ by TTLC) seem to be closer to achieving a single dimension which determines response across conditions, yet there is still reasonable stratification across failure type conditions. 
+
+
+```{r plot SWA max and RT takeover, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=6,fig.cap="Fig 12. A) SWA max by RT and Failure type. B) SWA max by TTLC and Failure Type"}
+
+
+
+
+
+#plot RT and SWA_max to compare different RTs and steering demand across Failure Type.
+
+#This is a useful plot for understanding that steering corrections are not linked just to the speed of response.
+
+p_SWAmax_RT <- ggplot(data = filter(takeover_state, RT>0, failure_type != "Benign"), aes(x = RT, y = SWA_max, col = factor(failure_type), fill = factor(failure_type))) +
+  geom_point(alpha = .8) +
+  #facet_wrap(~failure_type) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  geom_smooth(se = T, method = lm) +
+  #geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(15, 90))
+
+p_SWAmax_sb <- ggplot(data = filter(takeover_state, RT>0, TTLC< 10, failure_type != "Benign"), aes(x = sb_mirrored, y = SWA_max, col = factor(failure_type), fill = factor(failure_type))) +
+  geom_point(alpha = .8) +
+  #facet_wrap(~failure_type) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  geom_smooth(se = T, method = lm) +
+  #geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition_report +
+  xlab(expression("Lane Position (m)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(y = c(15, 90))
+
+p_SWAmax_ttlc <- ggplot(data = filter(takeover_state, RT>0, TTLC< 10, failure_type != "Benign"), aes(x = TTLC, y = SWA_max, col = factor(failure_type), fill = factor(failure_type))) +
+  geom_point(alpha = .8) +
+  #facet_wrap(~failure_type) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")  +
+  geom_smooth(se = T, method = lm) +
+  #geom_text(inherit.aes = F, data = cor_SWA_RT, aes(label = paste("Overall R = ", round(r_SWA_max,2), sep = ""), x = c(1, 1.5, 2.5), y = c(50, 80, 80))) +
+  theme_transition_report +
+  xlab(expression("TTLC (s)")) + ylab(expression("SWA"["max"]*" ("*degree*")")) +
+  expand_limits(x = c(0, 2), y = c(15, 90))
+
+legend <- get_legend(p_SWAmax_RT)
+p <- plot_grid(p_SWAmax_RT + theme(legend.position="none"),
+               p_SWAmax_sb + theme(legend.position="none"),
+               p_SWAmax_ttlc + theme(legend.position="none"),
+            labels = c("A", "B", "C"), nrow=1)
+p_legend <- plot_grid(p, legend, rel_widths = c(4,.5))
+show(p_legend)
+
+
+```
+
+
+
+```{r old code, echo=FALSE, message=FALSE, eval= FALSE, warning=FALSE, fig.width=10,fig.height=10,fig.cap="Fig 5. A) Average trajectories, B) Shown as steering bias"}
+
+#can use AutoFlag to select manual control periods.
+
+#add trialid to frame by frame dataset because the current one doesn't include enough unique information
+steergazedata <- steergazedata %>% 
+  mutate(trialid = paste(ppid, radius, yawrate_offset, cogload, block, count, sep = "_"))
+
+
+
+### Reset trial so they all start at around [0,0] 
+steergaze_manual <- steergaze_manual %>% 
+  ungroup() %>% 
+  group_by(trialid) %>%
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+#create trial list for sample one trial
+triallist <- steergaze_manual %>% 
+  ungroup() %$% 
+  unique(trialid) 
+
+
+head(steergaze_manual)
+
+
+########### NEED TO ROTATE AROUND START OF BEND #########
+
+#create function that takes an x and z and rotates it back to origin.
+resettrajectory <- function(df){
+  
+
+  #the origin of the bend is +rads, +16 m
+  
+  x = df$world_x_mirrored
+  z = df$World_z
+  rads = first(df$radii)
+  failure_type = df$failure_type[1]
+  cogload = df$cogload[1]
+  
+  bend_origin_x = rads
+  bend_origin_z = 16
+  
+  
+  #z = z - bend_start
+  #x = x - rads
+  #first retrieve the angle between world_x and world_z and the abscissa, relative to the origin. 
+
+  x = x - bend_origin_x
+  z = z - bend_origin_z
+ 
+  x1 = first(x)
+  z1= first(z)
+  
+  
+  length_from_bend_origin = sqrt( (x1)^2 + (z1 )^2 )   #b
+  length_from_bend_start = sqrt( (x1 - -bend_origin_x) ^2 + (z1 )^2 ) #c
+  
+  #print(length_from_bend_origin)
+  #print(length_from_bend_start)
+  
+  #use cosine rule to find rotation angle
+  numerator = (length_from_bend_origin^2 + rads^2 - length_from_bend_start^2)
+  denominator =  2 * length_from_bend_origin * rads
+  rotation_angle = acos(  numerator / denominator )
+
+  x_rotate <- cos(rotation_angle) * (x ) - 
+    sin(rotation_angle) * (z) 
+  z_rotate <- sin(rotation_angle) * (x) + 
+    cos(rotation_angle) * (z) 
+  
+  #reset to zero, but conserve steering bias offset. The other way of doing this would be to minus the closest point.
+  x_rotate <- x_rotate + bend_origin_x
+  z_rotate <- z_rotate + bend_origin_z 
+  
+  ret <- data_frame(world_x_rotate = x_rotate,
+             world_z_rotate = z_rotate,
+             radius = rads,
+             failure_type = failure_type,
+             cogload = cogload)
+  
+  return(ret)
+
+}
+
+
+#load track data
+track_80 <- read.csv("track_with_edges_orca_80.csv")
+track_40 <- read.csv("track_with_edges_orca_40.csv")
+
+steergaze_manual_rotated <- steergaze_manual %>% 
+  group_by(trialid) %>% 
+  do(resettrajectory(.))
+
+head(steergaze_manual_rotated_40)
+
+steergaze_manual_rotated_40 <- steergaze_manual_rotated %>% 
+  filter(radius == 40)
+
+head(steergaze_manual_rotated_40)
+
+p_40 <- ggplot(data = filter(steergaze_manual_rotated_40, failure_type == "Sudden"), aes(x = SB_mirrored, y= f)) +
+  geom_path(aes(group = trialid), alpha = .3) +
+  #scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_path(data = track_40, aes(x = midlinex, y=midlinez), colour = "grey", linetype = "dashed") +
+  geom_path(data = track_40, aes(x = outsidex, y=outsidez), colour = "grey") +
+  geom_path(data = track_40, aes(x = insidex, y=insidez), colour = "grey") #+
+  #xlim(c(min(track_40$outsidex)-20, max(steergaze_manual_rotated_40$world_x_rotate))) #+
+
+   # ylim(c(16,60))
+
+show(p_40)
+
+p_sb <- ggplot(data = filter(steergaze_manual, radii == 40, failure_type != "Benign", f < 300), aes(x = f, y= SB_mirrored, col = factor(failure_type))) +
+  geom_path(aes(group = trialid), alpha = .3) +
+  geom_smooth(se= F) +
+  #scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_hline(yintercept = c(-1.5, 1.5), col = "grey", linetype = "dashed") +
+  ylim(c(-1.6,1.6)) +
+  geom_hline(yintercept = 0, col = "black", linetype = "dashed")
+  
+
+show(p_sb)
+
+p_sb_cogload <- ggplot(data = filter(steergaze_manual, radii == 40, failure_type == "Sudden", f < 300), aes(x = f, y= SB_mirrored, col = factor(cogload))) +
+  geom_path(aes(group = trialid), alpha = .3) +
+  geom_smooth(se= F) +
+  #scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_hline(yintercept = c(-1.5, 1.5), col = "grey", linetype = "dashed") +
+  ylim(c(-1.6,1.6)) +
+  geom_hline(yintercept = 0, col = "black", linetype = "dashed")
+  
+
+show(p_sb_cogload)
+
+p_swa <- ggplot(data = filter(steergaze_manual, radii == 40, failure_type == "Sudden", f < 300), aes(x = f, y= SWA_mirrored, col = factor(cogload))) +
+  geom_path(aes(group = trialid), alpha = .3) +
+  geom_smooth(se= T) 
+  #scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  
+show(p_swa)
+
+head(mytrial)
+#now try to rotate it
+steergaze_manual_rotated <- mytrial %>% 
+  group(trialid) %>% 
+  do(resettrajectory(.$world_x_mirrored, .$World_z, first(.$WorldYaw), first(.$SteeringBias), first(.$radii)))
+
+p_raw + 
+  geom_path(data = rotate_mytrial, aes(x = world_x_rotate, y=world_z_rotate), colour = "red") 
+
+show(p_raw)
+
+#need to figure out what's going on in the trajectories where the behaviour is very different.
+# The difference in behaviour seems legitimate. They take control very quickly, almost at the start of the trials.
+
+#plot everything.
+
+
+
+steergaze_40 <- steergazedata %>% 
+  filter(radius == 40)
+
+head(steergaze_manual)
+#takeover coordinates:
+
+delay = 0.25
+pre_takeover_state <- steergazedata %>%
+  ungroup() %>% 
+  filter(AutoFlag == T) %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial >  last(timestamp_trial) - delay) %>% 
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = SB_mirrored[1] - SB_mirrored[2],
+            ttlc = (1.5 - abs(sb_mirrored)) / (abs(sb_change)*60),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = time - onset,
+            bend = first(bend),
+            ppid = first(ppid))
+
+
+takeover_state <- steergaze_manual %>%
+  group_by(trialid) %>% 
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = SB_mirrored[1] - SB_mirrored[2],
+            ttlc = (1.5 - abs(sb_mirrored)) / (abs(sb_change)*60),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = time - onset,
+            bend = first(bend),
+            ppid = first(ppid),
+            autofile = first(AutoFile))
+
+p_all_40 <- ggplot(data = filter(steergaze_manual, failure_type == "Sudden", radii == 40), aes(x = world_x_mirrored, y= World_z)) +
+  geom_path(aes(group = trialid), alpha = .3) +
+  #scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cognitive Load") +
+  geom_path(data = track_40, aes(x = midlinex, y=midlinez), colour = "grey", linetype = "dashed") +
+  geom_path(data = track_40, aes(x = outsidex, y=outsidez), colour = "grey") +
+  geom_path(data = track_40, aes(x = insidex, y=insidez), colour = "grey") +
+  xlim(c(min(track_40$outsidex), max(steergaze_manual_rotated_40$world_x_rotate))) +
+  geom_point(data = filter(takeover_state, rads == 40, failure_type == "Sudden"), aes(x=x, y=z), col="red", alpha = .5)
+  #ylim(c(16,60))
+
+show(p_all_40)
+
+#plot the takeover points
+ggplot(data = filter(takeover_state, rads == 40), aes(x = x, y = z, col = factor(cogload))) +
+  geom_path(data = track_40, aes(x = midlinex, y=midlinez), colour = "grey", linetype = "dashed") +
+  geom_path(data = track_40, aes(x = outsidex, y=outsidez), colour = "grey") +
+  geom_path(data = track_40, aes(x = insidex, y=insidez), colour = "grey") +
+  geom_point(alpha = .8) +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load")
+  
+#when do they takeover straight away? 
+
+
+#first, sb by failure type
+ggplot(data = takeover_state, aes(x = sb_mirrored, group = factor(failure_type), fill = factor(failure_type))) +
+         geom_density(alpha = .8) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") 
+       
+
+ggplot(data = takeover_state, aes(x = sb_mirrored, y = RT, col = factor(failure_type))) +
+         geom_point(alpha = .8) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type") +
+  geom_vline(xintercept = c(-1.5,1.5), linetype = "dashed", col = "grey")
+
+
+ggplot(data = takeover_state, aes(x = onset)) + geom_histogram(bins = 16) 
+
+#onset by ttlc
+ggplot(data = filter(takeover_state, ttlc < 10), aes(x = onset, y= ttlc, col = factor(cogload), group = factor(cogload))) + 
+  geom_jitter(width = .05, alpha = 1) +
+  scale_y_continuous(breaks=c(.5,1,1.5,2,2.5,3,4,5,7.5,10)) +
+  ylab("TTLC (s)") + xlab("Onset Time") +
+  stat_function(fun = function(x) 15 - x, col = "blue") +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load") +
+  geom_smooth()
+
+
+#ttlc by RT
+ggplot(data = filter(takeover_state, ttlc < 10), aes(x = ttlc, y= RT, col = factor(cogload))) + 
+  geom_point() +
+  scale_colour_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load") 
+
+ggplot(data = filter(takeover_state, ttlc < 10, RT > 0, failure_type != "Benign", rads == 40), aes(x = RT, y= ttlc, shape = factor(autofile), col = factor(onset))) + 
+  geom_point(alpha = .5)
+
+ggplot(data = filter(pre_takeover_state, ttlc < 10, RT > 0, failure_type != "Benign"), aes(x = ttlc, y= RT)) + 
+  geom_point(alpha = .5)
+  
+
+ggplot(data = filter(takeover_state, ttlc < 10), aes(x = sb_change, y= RT)) + 
+  geom_point()
+
+ggplot(data = filter(takeover_state, ttlc < 10), aes(x = sb_change, y= ttlc)) + 
+  geom_point()
+
+
+print(takeover_state$ttlc)
+
+
+ggplot(data = filter(pre_takeover_state, ttlc < 10), aes(x =ttlc, group = factor(failure_type), fill = factor(failure_type))) +
+         geom_density(alpha = .8) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type")
+
+ggplot(data = filter(takeover_state, ttlc < 10, failure_type == "Sudden"), aes(x =ttlc, group = factor(cogload), fill = factor(cogload))) +
+         geom_density(alpha = .8) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load")
+
+ggplot(data = filter(takeover_state, ttlc < 10, failure_type == "Gradual"), aes(x =ttlc, group = factor(cogload), fill = factor(cogload))) +
+         geom_density(alpha = .8) +
+  scale_fill_manual(values = wes_palette("Cavalcanti1",n=3), name = "Cog Load") 
+  
+```
+
+
+
+### What determines reaction time? 
+ 
+So far we have examined the speed of takeover and aggression of the initial steering response. This varies massively across failure type conditions, and less so during differences in cognitive load. However, the SAB magnitudes used in our conditions is fairly artificial (though the TTLCs were based on the literature), and we are not particularly interested whether there are differences between our categorical conditions. We are more interested in what perceptual information people are attending to that means they react quicker and with greater magnitude of response in one condition over the other.
+
+With this in mind we proceed to conduct regression analysis with variables from the scene as continuous predictors, rather than with failure_type as categorical predictors. In the first instance the RT~takeover~ is predicted from the state of the world at .25 s before the switch to manual mode (to allow for execution delays). Two variables are chosen for a first pass: lane position and change in lane position.
+
+```{r calculate delayed state, echo=FALSE, message=FALSE, warning=FALSE}
+
+delay = .25
+takeover_state_delayed <- steergazedata %>%
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + OnsetTime - delay)) %>% 
+  summarise(x = first(world_x_mirrored),
+            z = first(World_z),
+            rads = first(radii),
+            sb = first(SteeringBias),
+            sb_mirrored = first(SB_mirrored),
+            sb_change = first(SB_change),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            time = first(timestamp_trial),
+            RT = first(RT),
+            TTLC = first(TTLC),
+            bend = first(bend),
+            ppid = first(ppid),
+            SWA_max = max(SWA_mirrored, na.rm = T),
+            autofile = first(AutoFile),)
+
+
+```
+
+```{r create trial history, echo=FALSE, message=FALSE, warning=FALSE}
+
+#group by trial id and start the first exp_timestamp.
+#then order by exp_timestamp.
+#then trim the last, add an NA to the front.
+#add it in to trial averages.
+ts_exps <- steergazedata %>%
+  ungroup() %>% 
+  filter(AutoFlag == FALSE) %>% 
+  group_by(ppid, trialid) %>%
+  summarise(ts_exp = first(timestamp_exp),
+            cogload = first(cogload),
+            failure_type = first(failure_type),
+            onset = first(OnsetTime),
+            rads = first(radii),
+            RT = first(RT),
+            TTLC = first(TTLC),
+            SWA_max = max(SWA_mirrored, na.rm = T))
+
+shiftvector <- function(x){
+  
+  #shift vector forward one.
+  x = prepend(x,NA)
+  x = x[-length(x)]
+  
+}
+
+ts_exps <- ts_exps %>% 
+  group_by(ppid) %>% 
+  arrange(ts_exp) %>% 
+  mutate(cogload_hist = shiftvector(cogload),
+         failure_type_hist = shiftvector(failure_type),
+         onset_hist = shiftvector(onset),
+         rads_hist = shiftvector(rads))
+  
+ts_exps <- ts_exps %>%
+  arrange(ppid)
+
+levels(ts_exps$failure_type)
+levels(ts_exps$cogload)
+
+#1 = Sudden, 2 = Gradual, 3 = Benign
+#1 = Easy, 2 = Hard, 3 = None.
+
+ggplot(data = filter(ts_exps, TTLC < 10, RT >0), aes(x = RT, group = factor(failure_type_hist), col = factor(failure_type_hist))) + 
+  geom_density(alpha = .8) +
+  facet_wrap(~failure_type, scales = "free") +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=3)), name = "Failure Type History")  +
+  theme_transition_report
+
+
+```
+
+
+```{r basic regression modelling of RT, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+
+
+#ggplot(takeover_state_delayed, aes(x = RT)) + geom_density()
+#only model failure types with a 100% takeover rate.
+data <- takeover_state_delayed %>% 
+  filter(failure_type != "Benign", RT > 0)
+
+#scale your variables by centering then dividing by two standard deviations http://www.stat.columbia.edu/~gelman/research/unpublished/standardizing.pdf
+data <- data %>% 
+  mutate(sb_mirrored.z = (sb_mirrored - mean(sb_mirrored)) / (2 * sd(sb_mirrored)),
+         sb_change.z = (sb_change - mean(sb_change)) / (2 * sd(sb_change)),
+         TTLC.z = (TTLC - mean(TTLC) / (2 * sd(TTLC))))
+
+cor(data$sb_mirrored.z, data$sb_change.z)
+cor(data$sb_mirrored.z, data$RT)
+cor(data$RT, data$sb_change.z)
+
+#ggplot(data, aes(x = RT)) + geom_density()
+
+m_rt_gauss = brm(RT ~ sb_mirrored.z * sb_change.z, data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+save(m_rt, file ="m_rt.rda")
+
+m_rt_logn = brm(RT ~ sb_mirrored.z * sb_change.z, data = data,
+            family = lognormal(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+
+m_rt_weib = brm(RT ~ sb_mirrored.z * sb_change.z, data = data,
+            family = weibull(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+print(m_rt_gauss)
+pp_check(m_rt_gauss) #doesn't seem to capture either of the peaks very well. 
+pp_check(m_rt_logn)
+pp_check(m_rt_weib)
+
+loo(m_rt_gauss, m_rt_logn, m_rt_weib)
+loo_model_weights(m_rt_gauss, m_rt_logn, m_rt_weib)
+
+#gauss clearly better.
+
+m_rt_gauss_ppid = brm(RT ~ sb_mirrored.z * sb_change.z + (1 | ppid), data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  
+loo(m_rt_gauss, m_rt_gauss_ppid)
+loo_model_weights(m_rt_gauss, m_rt_gauss_ppid)
+pp_check(m_rt_gauss_ppid)
+#non hierarchical appears to be better.
+
+#plot model output.
+plot(m_rt_gauss)
+plot(marginal_effects(m_rt_gauss, effects = "sb_mirrored.z:sb_change.z"))
+plot(marginal_effects(m_rt_gauss, effects = "sb_mirrored.z"))
+plot(marginal_effects(m_rt_gauss, effects = "sb_change.z"))
+
+#let's plot it against the raw data. 
+fitted_RT_estimates <- as.data.frame(fitted(m_rt_gauss, re_formula = NA))
+
+#plot against actual data. 
+
+data$predicted <- fitted_RT_estimates$Estimate
+ggplot(data = data, aes(x = RT)) + geom_density(col = "black") +
+  geom_density(data = fitted_RT_estimates, aes(x = Estimate), col = "blue")
+
+ggplot(data = data, aes(x = RT, y = predicted)) + geom_point() +
+  geom_abline(slope=1)
+
+print(m_rt_gauss)
+
+
+m_rt_sb <- brm(RT ~ sb_mirrored.z, data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+pp_check(m_rt_sb)
+
+m_rt_sb_ch <- brm(RT ~ sb_mirrored.z + sb_change.z, data = data,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+pp_check(m_rt_sb_ch)
+
+pp_check(m_rt_gauss)
+
+loo(m_rt_sb, m_rt_sb_ch, m_rt_gauss)
+loo_model_weights(m_rt_sb, m_rt_sb_ch, m_rt_gauss)
+
+#let's fit the same model for benign failures as well. 
+
+#all failures definitely do not work. Takeover in non-critical failures needs to be modelled differently. 
+data_allfailures <- takeover_state_delayed %>% 
+  filter(RT > 0, sb_mirrored < 0)
+
+data_allfailures <- data_allfailures %>% 
+  mutate(sb_mirrored.z = (sb_mirrored - mean(sb_mirrored)) / (2 * sd(sb_mirrored)),
+         sb_change.z = (sb_change - mean(sb_change)) / (2 * sd(sb_change)))
+
+m_rt_allfailures = brm(RT ~ sb_mirrored.z * sb_change.z, data = data_allfailures,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+print(m_rt_allfailures)
+plot(marginal_effects(m_rt_allfailures, effects = "sb_mirrored.z:sb_change.z"))
+pp_check(m_rt_allfailures)
+
+
+
+```
+
+<!---
+ 
+Therefore, we recommend massively increasing the levels (e.g. ten levels) of silent failures so we have a decent breadth of SABs (and therefore TTCs) to fit models to. Only using one radii will increase the amount of levels we can assess. To ensure even coverage we will keep the design factorial, this means we can also do inferences on the data between conditions.
+
+Jami has also suggested that we could look model cognitive load as reducing sampling rate. Worth pursuing and I think would mean keeping the cognitive load conditions... 
+
+Another design change is increasing sensitivity of the steering wheel to lift the capping confound of the wheel angles...
+
+-->
+
+<!-- 
+After discussing with Richard we decided that some regression analysis was needed with first, second and third order perceptual variables to see what combination of measures best predicts RT.
+
+Another measure in there could be the trial type at n-1. For example, if there was a sudden trial preceding a benign trial, it is probably more likely that they would take over earlier than usual in the benign trial. To examine this you want to striate the TTLC by RT plot with N-1 failure_type.
+
+A useful plot might be TTLC and/or Steering Bias by Steering magnitude.
+
+31/05. Jami Discussion about the importance of orientation as well as the lane position. We concluded that this is captured within sb_change. And that lane position and sb_change should be inputted to the multiple regression independently of TTLC, because the TTLC assumes a particular relationship within the calculation. 
+
+-->
+
+### Other Pre-registered Hypotheses
+ 
+
+In the pre-registration there were three more hypotheses. Here I briefly list what we now know.
+ 
+- __H3__: Participants will sample from a more constricted region of the screen for increased cognitive load.
+
+_Not looked at yet, will look at if I have time before hols, but do not clearly see how this will change the design?_
+
+- __H4__: These effects of cognitive load will increase as cognitive load difficulty increases.
+
+_For sudden failures RT~takeover~ appears to be stratified somewhat by Easy or Hard load. However, this effect is small, and smaller still (or nonexistent) in the less severe failures_.
+
+- __H5__: Effects of cognitive load will become more pronounced when the (steering) task is more difficult (for sharp bends and sudden silent failures). 
+
+_There does not seem to be an interaction jumping out for bend radii. As stated above the small effects of cognitive load are more pronounced for silent failures_. 
+ 
+<!-- 
+
+One might predict that ttlc does not vary since this is a candidate for the threshold one is responding to. 
+
+
+issue of capped steering wheel angles at large angles produces inability to correct quick enough for sudden failures. 
+
+-->
+
+
+
+<!-- 
+Gaze with and without cognitive load.
+Gaze with and without automation. 
+-->
+
