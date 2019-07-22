@@ -8,7 +8,7 @@ from glob import glob
 if __name__ == '__main__':
 	#rootdir = sys.argv[1] 
     
-    rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\pilot_orca19"
+    rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
     
     output_filename = 'collated_steering.csv'
 
