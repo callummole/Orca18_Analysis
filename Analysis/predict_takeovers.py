@@ -74,11 +74,12 @@ for g, td in untouched.items():
     td['traj'] = traj
 
 
-times, trials, onsets, offsets, dump = zip(*[
+parts = [
     (v['takeover_time'], v['traj'], v['onset_time'], v['yawrate_offset'], g)
     for g, v in untouched.items()
-    if v['cogload'] == 'None'
-    ])
+    if v['cogload'] == 'None' and v['block'] > 1
+    ]
+times, trials, onsets, offsets, dump = zip(*parts[:10])
 
 times = np.array(times)
 durs = np.array([t['ts'].iloc[-1] for t in trials])
@@ -228,10 +229,16 @@ wtf.x = demangle(wtf.x)
 params = wtf.x
 """
 
-#rng = np.linspace(0.01, 1.0, 100)
-#losses = [param_likelihood((params[0], v, params[2], params[3])) for v in rng]
+#rng = np.linspace(0.01, 1.0, 30)
+X, Y = np.mgrid[0.001:0.5:100j,0.001:0.5:100j]
+losses = [param_likelihood((x, params[1], y, params[3])) for x, y in zip(X.ravel(), Y.ravel())]
 #plt.plot(rng, losses)
-#plt.show()
+from mpl_toolkits.mplot3d import Axes3D 
+from matplotlib import cm
+ax = plt.gcf().add_subplot(111, projection='3d')
+losses = np.array(losses)
+ax.plot_surface(X, Y, losses.reshape(X.shape), cmap=cm.coolwarm, antialiased=False)
+plt.show()
 
 thm, ths, rtm, rts, *_ = params
 
