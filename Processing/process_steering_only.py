@@ -8,24 +8,34 @@ from glob import glob
 if __name__ == '__main__':
 	#rootdir = sys.argv[1] 
     
-    rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
+    #rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
+    #rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
+    #rootdir = "C:/git_repos/Orca18_Analysis/Data"
+    rootdir = "E:/Orca19_FullSteeringDataset"
+    output_filename = 'Orca19_collated_steering.csv'
+
     
-    output_filename = 'collated_steering.csv'
 
-    master_stitch = pd.DataFrame() #master data for gaze and steering          
+    master_stitch = pd.DataFrame() #master data for gaze and steering         
 
-    for fn in glob(rootdir + "/*.csv"):
-        
-        print(fn)
-        
+    glob_match1 = "Orca19_[MN]*[0-9]*_[0-9][!a-zA-Z].csv" 
+    
 
-        trial_data = pd.read_csv(fn)
-        #print(trial_data)
-
+    for dirs in os.walk(rootdir): #does it for all dirs in that folder
+        path = str(dirs[0]) + "/"
+        print (path)
+        for fn in glob(path + glob_match1):
             
-        master_stitch = pd.concat([master_stitch,trial_data])
-        
-    #now you've built the master data of all trials, save it.
+            print(fn)
+            
+
+            trial_data = pd.read_csv(fn)
+            #print(trial_data)
+
+                
+            master_stitch = pd.concat([master_stitch,trial_data])
+            
+        #now you've built the master data of all trials, save it.
     master_stitch.to_csv(rootdir + "/" + output_filename)
 
 
