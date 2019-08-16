@@ -4,19 +4,27 @@ from scipy import stats
 import scipy.optimize
 import itertools
 
-def rt_likelihood(ts, vals, threshold, noise, lag=0.4):
-    # TODO: Lag as a distribution!
+def rt_likelihood(ts, vals, threshold, noise, lag=0.5):
     # TODO: Fumbling
+    # TODO: Recheck all the diff and convolution paddings and figure out
+    #   what to do with first/last sample
     # TODO: Compute as a continuous process (for constant or linear segments)
     dt = np.median(np.diff(ts)) # Hack
     # TODO: Check if the dt belongs within the sqrt and whether it should
     # be multiplied or divided!!?!
     std = noise*np.sqrt(dt)
     alive = np.exp(np.cumsum(stats.norm.logcdf(threshold, loc=vals, scale=std)))
-    #assert np.all(np.isfinite(alive))
-    prob = np.ediff1d(1 - alive, to_begin=0)
-    interp = interp1d(ts + lag, prob, fill_value=(np.nan, alive[-1]), bounds_error=False)
-    interp.cumulative = 1 - alive
+    dead = 1 - alive
+    
+    lagcdf = np.zeros(len(ts)*2 + 1)
+    lagcdf[-len(ts):] = stats.invgauss.cdf(ts - ts[0], mu=lag)
+
+    dead = np.ediff1d(np.convolve(dead, lagcdf, mode='valid')[:len(ts)], to_begin=0)
+    
+    prob = np.ediff1d(dead, to_begin=0)
+    
+    interp = interp1d(ts, prob, fill_value=(np.nan, 1 - dead[-1]), bounds_error=False)
+    interp.cumulative = dead
     return interp
 
 from reconstruct_trajectory import get_untouched_trajectories
@@ -53,7 +61,7 @@ def path_ttlc(a0, b, v, d0, w):
 
 def fit_trials(trials):
     speed = 8
-    w = (3 - 1.5)/2
+    w = (3 - 1)/2
 
     # TODO: This really shouldn't be done here
     for trial in trials:
@@ -97,8 +105,8 @@ def fit_trials(trials):
         ls = np.array([l(*np.exp(args)) for l in liks])
         return -np.sum(np.log(ls + 1e-9))
     
-    init = np.array([1.0, 1.0])
-    res = scipy.optimize.minimize(loss, np.log(init))
+    init = np.array([1.0, 1.0, 0.5])
+    res = scipy.optimize.minimize(loss, np.log(init), method='powell')
     res.x = np.exp(res.x)
     print(res)
     print((2*(len(init) + res.fun))/len(liks))
