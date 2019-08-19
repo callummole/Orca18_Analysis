@@ -2,10 +2,11 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy import stats
 import scipy.optimize
+import kwopt
 import itertools
 
-def rt_likelihood(ts, vals, threshold, noise, lag=0.5):
-    # TODO: Fumbling
+def rt_likelihood(ts, vals, threshold, noise, lag=0.5, fumble=0, distraction=0):
+    # TODO: No lag on fumbling!
     # TODO: Recheck all the diff and convolution paddings and figure out
     #   what to do with first/last sample
     # TODO: Compute as a continuous process (for constant or linear segments)
@@ -13,15 +14,30 @@ def rt_likelihood(ts, vals, threshold, noise, lag=0.5):
     # TODO: Check if the dt belongs within the sqrt and whether it should
     # be multiplied or divided!!?!
     std = noise*np.sqrt(dt)
-    alive = np.exp(np.cumsum(stats.norm.logcdf(threshold, loc=vals, scale=std)))
+    if fumble > 0:
+        unfumble_prob = stats.expon.logsf(dt, scale=1/fumble)
+    else:
+        unfumble_prob = np.log(1)
+    
+    if noise == 0:
+        thcum = np.log(1 - (vals > threshold).astype(float)*(1 - distraction))
+    elif distraction == 0:
+        thcum = stats.norm.logcdf(threshold, loc=vals, scale=std)
+    else:
+        thcum = np.log(1 - stats.norm.sf(threshold, loc=vals, scale=std)*(1 - distraction))
+
+    alive = np.exp(np.cumsum(unfumble_prob + thcum))
+    #alive = np.exp(np.cumsum(stats.norm.logcdf(threshold, loc=vals, scale=std) + np.log(1 - fumble)))
     dead = 1 - alive
     
-    lagcdf = np.zeros(len(ts)*2 + 1)
-    lagcdf[-len(ts):] = stats.invgauss.cdf(ts - ts[0], mu=lag)
+    if lag > 0:
+        lagcdf = np.zeros(len(ts)*2 + 1)
+        lagcdf[-len(ts):] = stats.invgauss.cdf(ts - ts[0], mu=lag)
 
-    dead = np.ediff1d(np.convolve(dead, lagcdf, mode='valid')[:len(ts)], to_begin=0)
+        dead = np.ediff1d(np.convolve(dead, lagcdf, mode='valid')[:len(ts)], to_begin=0)
     
     prob = np.ediff1d(dead, to_begin=0)
+
     
     interp = interp1d(ts, prob, fill_value=(np.nan, 1 - dead[-1]), bounds_error=False)
     interp.cumulative = dead
@@ -61,7 +77,7 @@ def path_ttlc(a0, b, v, d0, w):
 
 def fit_trials(trials):
     speed = 8
-    w = (3 - 1)/2
+    w = (3)/2
 
     # TODO: This really shouldn't be done here
     for trial in trials:
@@ -77,9 +93,22 @@ def fit_trials(trials):
         b *= direction
         a0 *= direction
         traj['ttlc'] = path_ttlc(a0, b, speed, d0, w)
-        traj['thresholdee'] =(1/np.maximum(1e-5, traj['ttlc'].values))**(1/3)
-        #traj['thresholdee'] = np.abs(traj['lane_bias'].values)
+        traj['thresholdee'] = 1.0/(np.maximum(1e-5, traj['ttlc'].values))
         
+        """
+        disttype = stats.lognorm
+        fitpars = (disttype.fit(traj['thresholdee'][traj.ts < trial['onset_time']]))
+        fit = disttype(*fitpars)
+        print(fitpars)
+        plt.hist(traj['thresholdee'][traj.ts < trial['onset_time']], density=True, bins=30)
+        plt.hist(traj['thresholdee'][(traj.ts > trial['onset_time']) & (traj.ts < trial['takeover_time'] - 0.1)], density=True, bins=30, histtype='step')
+        rng = np.linspace(0, 0.5, 1000)
+        plt.plot(rng, fit.pdf(rng))
+        plt.show()
+        """
+        #plt.hist(traj['thresholdee'][traj.thresholdee < 1/1e-4])
+        #plt.show()
+        #traj['thresholdee'] = np.abs(traj['lane_bias'].values)
         continue
         ax = plt.subplot(2,1,1)
         plt.plot(traj['ts'], np.degrees(d0), alpha=0.5)
@@ -97,20 +126,33 @@ def fit_trials(trials):
 
     trajs, tots = list(zip(*((v['traj'], v['takeover_time']) for v in trials)))
     liks = [
-            lambda *args, traj=traj, tot=tot: rt_likelihood(traj['ts'].values, traj['thresholdee'].values, *args)(tot)
+            lambda *args, traj=traj, tot=tot, **kwargs: rt_likelihood(traj['ts'].values, traj['thresholdee'].values, *args, **kwargs)(tot)
             for traj, tot in zip(trajs, tots)
             ]
 
-    def loss(args):
-        ls = np.array([l(*np.exp(args)) for l in liks])
+    def loss(**kwargs):
+        ls = np.array([l(**kwargs) for l in liks])
         return -np.sum(np.log(ls + 1e-9))
     
-    init = np.array([1.0, 1.0, 0.5])
-    res = scipy.optimize.minimize(loss, np.log(init), method='powell')
+    #init = np.array([1.0, 1.0, 0.5])
+    #res = scipy.optimize.minimize(loss, np.log(init), method='powell')
+    from kwopt import logbarrier, logitbarrier, fixed
+    init = dict(
+        threshold=(1.0, logbarrier),
+        noise=(1.0, logbarrier),
+        #noise=(0.0, fixed),
+        lag=(0.5, logbarrier),
+        #lag=(0.0, fixed, logbarrier),
+        fumble=(1/(60*60), logbarrier),
+        #fumble=(0.0, logitbarrier),
+        #distraction=(0.0001, logitbarrier),
+    )
+    res = kwopt.minimizer(loss, method='powell')(**init)
+    
     res.x = np.exp(res.x)
-    print(res)
+    nfree = sum(1 for p in init.values() if fixed not in p)
     print((2*(len(init) + res.fun))/len(liks))
-    return res.x
+    return res.kwargs
 
 # Transforms between TTLC and yaw rate offset on circular
 # trajectories, assuming centered initial position. Based on
@@ -146,16 +188,16 @@ def fit_per_participant():
         tots = []
         sabs = []
         for sd in sds:
-            if sd['otraj'].design.iloc[0] != 'balanced': continue
+            #if sd['otraj'].design.iloc[0] != 'balanced': continue
             traj = sd['traj']
-            lik = rt_likelihood(traj.ts.values, traj['thresholdee'], *params)
+            lik = rt_likelihood(traj.ts.values, traj['thresholdee'], **params)
             sab = sd['otraj']['sab'].iloc[0]
             if sd['otraj'].design.iloc[0] == 'balanced' and sab not in sab_preds:
                 sab_preds[sab] = lik
             fits.append(lik.x[np.argmax(lik.y)] - sd['onset_time'])
             tots.append(sd['takeover_time'] - sd['onset_time'])
             sabs.append(sab)
-
+            
             plt.plot(lik.x, lik.y)
             plt.axvline(sd['takeover_time'])
             plt.twinx()
@@ -166,26 +208,41 @@ def fit_per_participant():
         speed = 8
         margin = 3/2
         onset = 6
+
+        #plt.plot(tots, fits, '.')
+        #plt.show()
+        #continue
         
         sab_modes = []
         for sab, lik in sab_preds.items():
             sab_modes.append((
-                    lik.x[lik.cumulative.searchsorted(0.05)],
+                    lik.x[lik.cumulative.searchsorted(0.1)],
                     lik.x[lik.cumulative.searchsorted(0.25)],
                     #lik.x[np.argmax(lik.y)],
                     lik.x[lik.cumulative.searchsorted(0.5)],
                     lik.x[lik.cumulative.searchsorted(0.75)],
-                    lik.x[lik.cumulative.searchsorted(0.95)],
+                    lik.x[lik.cumulative.searchsorted(0.9)],
                     ))
         sab_modes = np.array(sab_modes) - onset
+        ts = next(iter(sab_preds.values())).x
+        uniq_sabs = list(sab_preds.keys())
+        ttlcs = np.abs(ttlc_from_offset(np.radians(uniq_sabs), margin, radius, speed))
+
+        #sab_probs = np.array([pred(ts) for pred in sab_preds.values()])
+        #ttlc_to_sabprob = scipy.interpolate.interp1d(ttlcs, sab_probs, axis=0)
+        #ttlcrng = np.linspace(np.min(ttlcs), np.max(ttlcs), 100)
+        #sab_probs = ttlc_to_sabprob(ttlcrng)
+        #plt.pcolor(ttlcs, ts, sab_preds)
+        #plt.imshow(sab_probs.T, aspect='auto', origin='lower', extent=(np.min(ttlcs), np.max(ttlcs), ts[0] - onset, ts[-1] - onset))
         
 
-        ttlcs = ttlc_from_offset(np.radians(list(sab_preds.keys())), margin, radius, speed)
         color = plt.plot(np.abs(ttlcs), sab_modes[:,(len(sab_modes))//2])[0].get_color()
         plt.fill_between(np.abs(ttlcs), sab_modes[:,0], sab_modes[:,-1], color=color, alpha=0.3)
         plt.fill_between(np.abs(ttlcs), sab_modes[:,1], sab_modes[:,-2], color=color, alpha=0.3)
         
         ttlcs = ttlc_from_offset(np.radians(sabs), margin, radius, speed)
+        #print(ttlcs)
+        #print(tots)
         plt.plot(np.abs(ttlcs), tots, '.')
 
         
@@ -193,6 +250,8 @@ def fit_per_participant():
         #plt.xlabel("Real takeover time (seconds since onset)")
         #plt.ylabel("Predicted takeover time (seconds since onset)")
         plt.show()
+    plt.plot([0, 10], [0, 10], color='black', alpha=0.5)
+    plt.show()
 
 
 def demo():
