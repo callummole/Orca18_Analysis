@@ -1,0 +1,140 @@
+---
+title: 'Building a statistical model of reaction times to automation failures.'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document steps through the statistical model building for takeover reaction times in a silent failure experiment, pre-reg can be found at https://osf.io/mydfw. We are primarily interested in how cognitive load affects reaction times at different levels of failure.
+
+First we load the data.
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+library("brms")
+library("tidybayes")
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+balanced_RTs <- read_csv("balanced_RTs.csv")  
+
+#add failure factor.
+balanced_RTs$failure <- factor(balanced_RTs$simTTLC, labels = c("1","2","3","4"))
+
+#get rid of premature takeovers. Not interested in those.
+balanced_RTs <- balanced_RTs %>% 
+  filter(premature == 0)
+
+knitr::kable(head(balanced_RTs))
+
+
+```
+Let's plot a scatter plot to get an idea of the behaviour. We draw trend lines through the medians of each factor.
+
+```{r scatter plots, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+med_RTs <- balanced_RTs %>% 
+  group_by(failure, cogload) %>% 
+  summarise(RT = median(RT))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(balanced_RTs, aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  geom_line(data = med_RTs, size = 1, position = dodge) +
+  geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+  
+```
+
+
+
+```{r load and plot random_RTs, echo=FALSE, message=FALSE, warning=FALSE}
+
+random_RTs <- read_csv("random_RTs.csv")  
+
+#get rid of premature takeovers. Not interested in those.
+random_RTs <- random_RTs %>% 
+  filter(premature == 0)
+
+data_RTs <- full_join(balanced_RTs, random_RTs)
+
+
+```
+
+
+```{r calc offset, echo=FALSE, message=FALSE, warning=FALSE}
+
+ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+  b = b / 180 * pi
+  
+  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+}
+data_RTs <- data_RTs %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+
+balanced_RTs <- balanced_RTs %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+
+```
+
+
+
+```{r m3 random intercept and slope, echo=FALSE, message=FALSE, warning=FALSE}
+
+form <- bf(RT | trunc(lb = 0, ub = 10) ~ failure * cogload, sigma ~ failure)
+#my_form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~ (1 + ttlc_calc | ppid), center = FALSE)
+m4.1 <- brm(data = balanced_RTs, formula = form, 
+          family = gaussian(),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+pp_check(m4.1)
+
+m4_predict <- balanced_RTs  %>%
+  add_predicted_draws(m4.1) 
+  #ggplot(aes(x = RT, y = .prediction)) +
+  #geom_point(alpha = .5)
+
+###plot predicted values
+### plot the distributions of the balanced RTs
+#retrieves ttlc_calc balanced levels.
+#ribbon plot
+ggplot(balanced_RTs, aes(x = ttlc_calc, y= RT)) +
+  stat_lineribbon(data = m4_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "magenta", fill = "red") +
+  xlim(0,15) + ylim(0,10) +
+  geom_point(alpha = .25, col = "black")
+
+
+m4_balanced_predictions <- filter(m4_predict, ttlc_calc %in% ttlc_calc_levels)
+
+ggplot(data = balanced_RTs) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m4_balanced_predictions, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free") +
+  ylab("density")
+
+ggplot(data = balanced_RTs) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m4_predict, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free") +
+  ylab("density")
+
+```

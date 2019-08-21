@@ -1,5 +1,5 @@
 ---
-title: 'Silent Failures in Automation RERUN. Pilot dataset of 2 participants'
+title: 'Silent Failures in Automation RERUN. 20 participants. Pre-reg: https://osf.io/mydfw'
 author: "Callum Mole"
 output:
   html_document:
@@ -14,7 +14,7 @@ output:
 
 ## Introduction
 
-I report on 2 participants who piloted our Silent Failures paradigm. Half the experiment was factorial: two cognitive loads (NoLoad, Load) and four factored failure severities (_Steering Angle Bias_; SAB). In the other half of the experiment the failure severities and onset times were quasi-random so that there was a spread of different types.
+I report on 20 participants who participated in our Silent Failures paradigm. Half the experiment was factorial: two cognitive loads (NoLoad, Load) and four factored failure severities (_Steering Angle Bias_; SAB). In the other half of the experiment the failure severities and onset times were quasi-random so that there was a spread of different types. The pre-registration can be found at https://osf.io/mydfw. The primary hypothesis is the effect of cognitive load on reaction times. 
 
 
 ```{r Load preliminaries, include=FALSE, warning=FALSE}
@@ -51,7 +51,10 @@ setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
 #load steergaze data
 
 
-steergazedata <- read_csv("collated_steering.csv")  
+#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
+#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
+steergazedata <- readRDS("../Data/Orca19_collated_steering.rds")  
+
 
 steergazedata <- steergazedata %>% 
 rename(swv = swa) %>% 
@@ -115,11 +118,11 @@ mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
 steergazedata <- steergazedata %>% 
   mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
 
-#rename cogload factors so that it ameks sense
 steergazedata$cogload <- as.factor(steergazedata$cogload)
-levels(steergazedata$cogload)[1]<- "noload"
-levels(steergazedata$cogload)[2] <- "load"
 
+
+#rename cogload factors so that it ameks sense
+steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
 
 balanced_steerdata <- steergazedata %>% 
   filter(design=="balanced")
@@ -168,7 +171,7 @@ pp2_trials <- steergazedata %>%
   
 
 ```
-
+We deal first with the _Balanced_ dataset, since these data were designed to test our primary hypotheses. First we check how many participants took over prematurely or who did not disengage. You can see from the tables below that participants took over before the failure in a minute amount of trials, and disengaged on every failure in the balanced trials (even though for the least severe failure the vehicle technically doesn't leave the road). In the _Random_ dataset (which has more gradual failures) there are less takeovers, and more of these takeovers are premature. 
 
 
 ```{r calculate RT takeover measure, echo=FALSE, message=FALSE, warning=FALSE}
@@ -192,13 +195,31 @@ disengage_perc <- steergaze_trialavgs %>%
   ungroup() %>% 
   summarise(pc = sum(disengaged) / n()) 
 
-#negative RT %
+disengage_bygroups <- steergaze_trialavgs %>% 
+  ungroup() %>%
+  filter(design == "balanced") %>% 
+  group_by(sab, cogload) %>% 
+  summarise(pc_disengaged = sum(disengaged) / n()) 
+
+knitr::kable(disengage_bygroups)
+
+  #negative RT %
 premature_perc <- steergaze_trialavgs %>% 
   ungroup() %>% 
   summarise(pc = sum(na.omit(premature)) / n()) 
+
+premature_bygroups <- steergaze_trialavgs %>% 
+  ungroup() %>% 
+  filter(design == "balanced") %>% 
+  group_by(sab, cogload) %>% 
+  summarise(pc_premature = sum(na.omit(premature)) / n()) 
+
+knitr::kable(premature_bygroups)
   
 
 ```
+
+Fig 1 below graphs the distribution of takeovers for each failure type (pooled over cognitive load). There is an intriguing double bump in each distribution.
 
 ```{r plotting RT takeover, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. RT takeover across balanced failure types"}
 
@@ -207,13 +228,13 @@ premature_perc <- steergaze_trialavgs %>%
 ggplot(filter(steergaze_trialavgs, design == "balanced"), aes(x = RT, group = factor(sab), fill = factor(sab))) +
   geom_density(alpha = .8) +
   xlim(c(0,10)) +
-  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=4)), name = "Failure Type") +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=4)), name = "Failure TTLC (s)", labels = c("2.23", "4.68", "7.1", "9.5")) +
   theme_transition_report +
   xlab(expression("RT"["takeover"]*" (s)"))
 
 ```
 
- In total, drivers disengaged the system in `r round(as.double(disengage_perc) * 100)` % of trials. 
+Fig 2 below splits these distributions according to cognitive load. The distributions for the Loaded conditions are wider.
 
 ```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 2. RT takeover across cognitive loads for balanced conditions"}
 
@@ -230,7 +251,7 @@ p_load <- ggplot(filter(steergaze_trialavgs, design == "balanced",cogload=="load
 p_cogload <- p_load +
   geom_density(data = filter(steergaze_trialavgs, design == "balanced", cogload == "noload"),
                  aes(x = RT, group = factor(sab), fill = cols[2]),
-                 alpha = .8) +
+                 alpha = .5) +
     scale_fill_identity(name = 'Cognitive Load',
   labels = c('Load','NoLoad'), breaks = c(cols[1],cols[2]), 
   guide = 'legend') 

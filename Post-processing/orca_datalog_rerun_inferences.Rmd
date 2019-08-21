@@ -1,0 +1,452 @@
+---
+title: 'Silent Failures in Automation RERUN. 20 participants. Pre-reg: https://osf.io/mydfw'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+I report on 20 participants who participated in our Silent Failures paradigm. Half the experiment was factorial: two cognitive loads (NoLoad, Load) and four factored failure severities (_Steering Angle Bias_; SAB). In the other half of the experiment the failure severities and onset times were quasi-random so that there was a spread of different types. The pre-registration can be found at https://osf.io/mydfw. The primary hypothesis is the effect of cognitive load on reaction times. 
+
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+#library(magrittr) #for extra pipe functions
+#library(cowplot)
+library("wesanderson")
+library(brms)
+library(tidybayes)
+
+#theme for plots on TRANSITION grant.
+theme_transition_report <- theme_classic() +
+  theme(strip.background = element_rect(fill=NA,color=NA), 
+        strip.text = element_text(face="bold",colour="black",size="12"), 
+        axis.title = element_text(face="bold",colour="black",size="12"),
+        axis.text.x = element_text(vjust=-.5),
+        axis.text.y = element_text(vjust=.5),
+        axis.text = element_text(face="plain",colour="black",size="10"),
+        legend.text = element_text(face="plain",colour="black",size="10"),
+        legend.title = element_text(face="bold",colour="black",size="12"),
+        legend.key = element_blank()
+        #panel.grid.major.y = element_line(color="grey85",size=.2, linetype = 2)
+        )
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+#load steergaze data
+
+
+#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
+#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
+steergazedata <- readRDS("../Data/Orca19_collated_steering.rds")  
+
+
+steergazedata <- steergazedata %>% 
+rename(swv = swa) %>% 
+mutate(swa = swv * 90)
+
+#mirror data
+steergazedata <- steergazedata %>% 
+mutate(world_x_mirrored = if_else(bend == -1, world_x * -1, world_x),
+       swa_mirrored = if_else(bend == -1, swa * -1, swa),
+       swv_mirrored = if_else(bend == -1, swv * -1, swv),
+       sb_mirrored = if_else(bend == -1, steeringbias * -1, steeringbias))
+
+
+#unsophisticated calculation of TTC using rate of change in steering bias
+calc_TTC <- function(sb_mirrored, sb_change){
+
+  #need to incorporate the proximity to road edges and direction of travel.
+  
+  sb_mirrored <- array(sb_mirrored) #needs to be an array to use apply
+  
+  road_edges <- c(-1.5, 1.5)
+  
+  distance_to_edges <- apply(sb_mirrored, 1, function(x) road_edges - x)
+  
+  TTLCs <- apply(distance_to_edges,1, function(x) x / (sb_change * 60))
+  
+  TTLC <- apply(TTLCs, 1, max)
+  
+  return(TTLC)
+    
+}
+  
+#add ttlc
+steergazedata <- steergazedata %>% 
+mutate(sb_change = prepend(diff(sb_mirrored), NA),
+       TTLC = calc_TTC(sb_mirrored, sb_change)
+       )
+
+
+  #add RT and disengage flag.
+disengage_RT <- function(onsettime, timestamp_trial, autoflag){
+
+  #pick first frame where autoflag == false, then take the timestamp and minus the onset_time
+  auto_false <- which(autoflag == "FALSE")
+  disengage_index <- first(auto_false)
+  disengage_trialtime <- timestamp_trial[disengage_index]
+  onset_time <- first(onsettime)
+  RT <- disengage_trialtime - onset_time #can be negative
+  return(RT)
+  
+}
+
+#calculate RT
+steergazedata <- steergazedata  %>% 
+group_by(ppid, sab, cogload, trialn) %>% 
+mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
+      disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
+      )
+
+#create unique trial id
+steergazedata <- steergazedata %>% 
+  mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
+
+steergazedata$cogload <- as.factor(steergazedata$cogload)
+
+
+#rename cogload factors so that it ameks sense
+steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
+
+balanced_steerdata <- steergazedata %>% 
+  filter(design=="balanced")
+
+random_steerdata <- steergazedata %>% 
+  filter(design=="random")
+
+#refactor sab for 
+balanced_steerdata <- balanced_steerdata %>% 
+ungroup() %>% 
+mutate (failure_type = case_when( sab == -0.3039716 ~ ".3",
+                                  sab == -0.52191351 ~ ".5",
+                                  sab == -1.19868047 ~ "1.19",
+                                  sab == -5.72957795 ~ "5.72"
+                                  )
+        ) %>% 
+mutate(failure_type = as.factor(failure_type),
+       cogload = as.factor(cogload),
+       ppid = as.factor(ppid))
+
+
+
+#we now have two data frames. "balanced_steerdata" and "random_steerdata"
+
+
+
+```
+
+
+```{r data logging, echo=FALSE, message=FALSE, warning=FALSE, include = FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. Amount of trials in each condition"}
+
+#count the trials.
+
+#Each participant experiences 4 (SAB) x 6 (repetitions) + 24 (sobel/random trials) = 48 x 2 (cognitive load) 
+
+pp1_trials <- steergazedata %>% 
+  filter(ppid == 1) %>% 
+  ungroup() %$% 
+  unique(trialid)
+
+
+pp2_trials <- steergazedata %>% 
+  filter(ppid == 2) %>% 
+  ungroup() %$% 
+  unique(trialid)
+  
+
+```
+We deal first with the _Balanced_ dataset, since these data were designed to test our primary hypotheses. First we check how many participants took over prematurely or who did not disengage. You can see from the tables below that participants took over before the failure in a minute amount of trials, and disengaged on every failure in the balanced trials (even though for the least severe failure the vehicle technically doesn't leave the road). In the _Random_ dataset (which has more gradual failures) there are less takeovers, and more of these takeovers are premature. 
+
+
+```{r calculate RT takeover measure, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+#RT and disengaged are already calculated.
+steergaze_trialavgs <- steergazedata  %>% 
+  ungroup() %>% 
+  group_by(ppid, cogload, trialn) %>% 
+  summarize(RT = first(RT),
+            disengaged = first(disengaged), #whether or not they actually took over.
+            premature = ifelse(RT <= 0, 1, 0),
+            sab = first(sab),
+            onsettime = first(onsettime),
+            design = first(design),
+            simTTLC = first(simulated_ttlc))
+
+
+
+#disengage %
+disengage_perc <- steergaze_trialavgs %>% 
+  ungroup() %>% 
+  summarise(pc = sum(disengaged) / n()) 
+
+disengage_bygroups <- steergaze_trialavgs %>% 
+  ungroup() %>%
+  filter(design == "balanced") %>% 
+  group_by(sab, cogload) %>% 
+  summarise(pc_disengaged = sum(disengaged) / n()) 
+
+knitr::kable(disengage_bygroups)
+
+  #negative RT %
+premature_perc <- steergaze_trialavgs %>% 
+  ungroup() %>% 
+  summarise(pc = sum(na.omit(premature)) / n()) 
+
+premature_bygroups <- steergaze_trialavgs %>% 
+  ungroup() %>% 
+  filter(design == "balanced") %>% 
+  group_by(sab, cogload) %>% 
+  summarise(pc_premature = sum(na.omit(premature)) / n()) 
+
+knitr::kable(premature_bygroups)
+  
+
+```
+
+Fig 1 below graphs the distribution of takeovers for each failure type (pooled over cognitive load). There is an intriguing double bump in each distribution.
+
+```{r plotting RT takeover, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. RT takeover across balanced failure types"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+
+ggplot(filter(steergaze_trialavgs, design == "balanced"), aes(x = RT, group = factor(sab), fill = factor(sab))) +
+  geom_density(alpha = .8) +
+  xlim(c(0,10)) +
+  scale_fill_manual(values = rev(wes_palette("BottleRocket2",n=4)), name = "Failure TTLC (s)", labels = c("2.23", "4.68", "7.1", "9.5")) +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)"))
+
+```
+
+```{r plotting RT takeover, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10.5,fig.height=4.5,fig.cap="Fig 1. RT takeover across balanced failure types"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+
+ggplot(filter(steergaze_trialavgs, design == "balanced"), aes(x = RT, col= factor(sab))) +
+  geom_histogram(binwidth = .05) +
+    facet_grid(cogload~.) +
+  xlim(c(0,10)) +
+  scale_color_manual(values = rev(wes_palette("BottleRocket2",n=4)), name = "Failure TTLC (s)", labels = c("2.23", "4.68", "7.1", "9.5")) +
+  theme_transition_report 
+
+```
+
+Fig 2 below splits these distributions according to cognitive load. The distributions for the Loaded conditions are wider, and the most part appear to be shifted in the slower direction.
+
+```{r plotting RT takeover within failure type conditions, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 2. RT takeover across cognitive loads for balanced conditions"}
+
+#first plot is the RTs across different failure types. Boxplots or density estimates are good option.
+cols = wes_palette("Darjeeling1", n=2)
+
+#head(steergaze_trialavgs)
+p_load <- ggplot(filter(steergaze_trialavgs, design == "balanced",cogload=="load"), aes(x = RT, group = factor(sab))) +
+  geom_density(alpha = .8, aes(fill = cols[1])) +
+  xlim(c(0,10)) +
+  theme_transition_report +
+  xlab(expression("RT"["takeover"]*" (s)"))
+
+p_cogload <- p_load +
+  geom_density(data = filter(steergaze_trialavgs, design == "balanced", cogload == "noload"),
+                 aes(x = RT, group = factor(sab), fill = cols[2]),
+                 alpha = .5) +
+    scale_fill_identity(name = 'Cognitive Load',
+  labels = c('Load','NoLoad'), breaks = c(cols[1],cols[2]), 
+  guide = 'legend') 
+
+
+show(p_cogload)
+
+```
+We will now model the data using brms, to estimate the magnitude of the differences in RTs between LOad conditions, and how this is affected by Failure severity. There are two factors in the model, and the coefficients are allowed to vary across participants.
+
+
+
+Fig 2 below splits these distributions according to cognitive load. The distributions for the Loaded conditions are wider, and the most part appear to be shifted in the slower direction.
+
+```{r building a model, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 3. building a model"}
+
+
+```
+
+```{r brms model fitting, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 3. pp checks of different distributions"}
+
+balanced_trialavgs <- steergaze_trialavgs %>% 
+  filter(design == "balanced")
+
+balanced_trialavgs$simTTLC <- as.factor(balanced_trialavgs$simTTLC)
+balanced_trialavgs <- balanced_trialavgs %>% 
+  filter(RT > 0)
+
+conflict_prefer("Position","ggplot2")
+if (!file.exists("m_rt_weib.rda")) {
+  m_rt_weib = brm(RT  ~ simTTLC * cogload + (1 + simTTLC * cogload | ppid), data = balanced_trialavgs,
+            family = weibull(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  save(m_rt_weib, file ="m_rt_weib.rda")
+} else {load("m_rt_weib.rda")}
+
+if (!file.exists("m_rt_gaus.rda")) {
+  m_rt_gaus = brm(RT  ~ simTTLC * cogload + (1 + simTTLC * cogload | ppid), data = balanced_trialavgs,
+            family = gaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  save(m_rt_gaus, file ="m_rt_gaus.rda")
+} else {load("m_rt_gaus.rda")}
+
+if (!file.exists("m_rt_logn.rda")) {
+  m_rt_logn = brm(RT  ~ simTTLC * cogload + (1 + simTTLC * cogload | ppid), data = balanced_trialavgs,
+            family = lognormal(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  save(m_rt_logn, file ="m_rt_logn.rda")
+} else {load("m_rt_logn.rda")}
+
+if (!file.exists("m_rt_exgaus.rda")) {
+  m_rt_exgaus = brm(RT  ~ simTTLC * cogload + (1 + simTTLC * cogload | ppid), data = balanced_trialavgs,
+            family = exgaussian(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  save(m_rt_exgaus, file ="m_rt_exgaus.rda")
+} else {load("m_rt_exgaus.rda")}
+
+if (!file.exists("m_rt_shift_logn.rda")) {
+  m_rt_shift_logn = brm(RT  ~ simTTLC * cogload + (1 + simTTLC * cogload | ppid), data = balanced_trialavgs,
+            family = shifted_lognormal(),
+            iter = 3000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  save(m_rt_shift_logn, file ="m_rt_shift_logn.rda")
+} else {load("m_rt_shift_logn.rda")}
+
+plot(m_rt_weib)
+
+summary(m_rt_weib)
+summary(m_rt_gaus)
+summary(m_rt_logn)
+summary(m_rt_exgaus)
+summary(m_rt_shift_logn)
+
+library(cowplot)
+
+#gaussian is better
+#there are loads of predictive checks out there
+#https://mc-stan.org/bayesplot/reference/PPC-distributions.html
+pp_check(m_rt_weib, type = "hist") 
+pp_check(m_rt_weib, type = "dens_overlay") 
+pp_check(m_rt_weib, type = "violin_grouped", group = "ppid")
+pp_check(m_rt_weib, type = "violin_grouped", group = "ppid") 
+pp_check(m_rt_weib, type = "freqpoly_grouped", group = "ppid")
+pp_check(m_rt_weib, type = "error_hist_grouped", group = "ppid", nsamples = 5)
+pp_check(m_rt_weib, type = "stat_freqpoly_grouped", group = "ppid") 
+pp_check(m_rt_weib, type = "stat_grouped", group = "simTTLC", stat = "median") 
+pp_check(m_rt_weib, type = "stat_grouped", group = "simTTLC", stat = "mean") 
+
+pp_check(m_rt_gaus, type = "error_hist")
+
+  #ppc_bars_grouped
+  #ppc_error_hist_grouped
+  #ppc_freqpoly_grouped
+  #ppc_intervals_grouped
+  #ppc_ribbon_grouped
+  #ppc_scatter_avg_grouped
+  #ppc_stat_freqpoly_grouped
+  #ppc_stat_grouped
+  #ppc_violin_grouped
+
+p_weib <-pp_check(m_rt_weib) + xlim(0,10)
+p_gaus <- pp_check(m_rt_gaus)+ xlim(0,10)
+p_logn <- pp_check(m_rt_logn)+ xlim(0,10)
+p_exgaus <- pp_check(m_rt_exgaus)+ xlim(0,10)
+p_shift_logn <- pp_check(m_rt_shift_logn)+ xlim(0,10)
+
+legend <- get_legend(p_weib)
+
+p_all <- plot_grid(p_weib + theme(legend.position="none"), p_gaus + theme(legend.position="none"), p_logn + theme(legend.position="none"), p_exgaus + theme(legend.position="none"), p_shift_logn +theme(legend.position="none"), legend, labels = c("Weibull", "Gaussian", "Lognormal", "Exgaussian", "Shifted_Lognormal", ""), hjust = c(-2,-2,-2,-1,-1), nrow =2)
+
+show(p_all)
+
+loo(m_rt_weib, m_rt_gaus, m_rt_logn, m_rt_exgaus, m_rt_shift_logn)
+loo_model_weights(m_rt_weib, m_rt_gaus, m_rt_logn, m_rt_exgaus, m_rt_shift_logn)
+
+
+weib_qq <- balanced_trialavgs %>%
+  add_residual_draws(m_rt_weib) %>%
+  median_qi() %>%
+  ggplot(aes(sample = .residual)) +
+  geom_qq() +
+  geom_qq_line()
+
+gauss_qq <- balanced_trialavgs %>%
+  add_residual_draws(m_rt_gaus) %>%
+  median_qi() %>%
+  ggplot(aes(sample = .residual)) +
+  geom_qq() +
+  geom_qq_line()
+
+plots_qq <- plot_grid(weib_qq, gauss_qq, labels = c("Weibull","Gaussian"))
+show(plots_qq)
+
+#from this it seems that we should go with the weibull.
+```
+
+From the distributions and the loo model weights, it seems like the weibull distribution is the best bet for modelling the reaction time. Fig 4 takes a closer look at plotting the values against the raw data to check that the data falls within the expected bounds.
+
+```{r closer look at plotting against real data, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. Plotting weibull against real data"}
+
+#plot the weibull model next to real data for each group.
+#deal with samples 
+simTTLC_levels <- levels(balanced_trialavgs$simTTLC)
+cogload_levels <- levels(balanced_trialavgs$cogload)
+condition_list <- data.frame(simTTLC =  rep(simTTLC_levels, times = length(cogload_levels)),
+                             cogload = rep(cogload_levels, each = length(simTTLC_levels))
+)
+
+#draws
+rt_draws <- add_fitted_draws(newdata = condition_list, model = m_rt_weib, re_formula = NA) %>% 
+  select(simTTLC, cogload, .draw, .value)
+
+
+rt_predict <- add_predicted_draws(newdata = condition_list, model = m_rt_weib, re_formula = NA) %>% 
+  select(simTTLC, cogload, .draw, .prediction)
+
+#plot against raw data. check the 
+rt_predict_plot <- ggplot(data = rt_predict, aes(x = .prediction, y = simTTLC, group = cogload), alpha = .5) +
+  stat_intervalh(.width = c(.66, .95, .99)) +
+  facet_wrap(~ cogload) +
+  xlab("RT (s)") +
+  geom_point(data = balanced_trialavgs, aes(x = RT, y = simTTLC), position=position_nudge(y = +.2), alpha = .25)
+
+show(rt_predict_plot)
+
+#plot fitted draws for mean estimates against raw data.
+rt_plot <- ggplot(data = rt_draws, aes(x = .value, y = simTTLC, group = cogload), alpha = .5) +
+  geom_halfeyeh() +
+  facet_wrap( ~ cogload) +
+  xlab("RT (s)") +
+  geom_point(data = balanced_trialavgs, aes(x = RT, y = simTTLC, color = cogload), position = position_nudge(y = -.275), alpha = .25)+
+  stat_pointintervalh(data = balanced_trialavgs, aes(x = RT, y = simTTLC, group=cogload, color = cogload), .width = c(.66,.95), position = position_nudge(y = -0.15))
+  
+
+show(rt_plot)
+
+
+```
+
+```{r plotting models, echo=FALSE, message=FALSE, warning=FALSE, fig.width=14,fig.height=4.5,fig.cap="Fig 4. Plotting weibull against real data"}
+
+
+
+
+```

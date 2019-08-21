@@ -1,0 +1,474 @@
+---
+title: 'Building a statistical model of reaction times to automation failures.'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document steps through the statistical model building for takeover reaction times in a silent failure experiment, pre-reg can be found at https://osf.io/mydfw. We are primarily interested in how cognitive load affects reaction times at different levels of failure.
+
+First we load the data.
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+balanced_RTs <- read_csv("balanced_RTs.csv")  
+
+#add failure factor.
+balanced_RTs$failure <- factor(balanced_RTs$simTTLC, labels = c("1","2","3","4"))
+
+#get rid of premature takeovers. Not interested in those.
+balanced_RTs <- balanced_RTs %>% 
+  filter(premature == 0)
+
+knitr::kable(head(balanced_RTs))
+
+
+```
+Let's plot a scatter plot to get an idea of the behaviour. We draw trend lines through the medians of each factor.
+
+```{r scatter plots, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+med_RTs <- balanced_RTs %>% 
+  group_by(failure, cogload) %>% 
+  summarise(RT = median(RT))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(balanced_RTs, aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  geom_line(data = med_RTs, size = 1, position = dodge) +
+  geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+  
+```
+There seems to be a consistent rise in RT for less severe failures. Cognitive load seems to increase RTs only a small bit. 
+
+However, there are some complications. The variances increase in line with the failure levels. (see below plot). 
+
+
+```{r plot variance, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+var_RTs <- balanced_RTs %>% 
+  group_by(failure, cogload) %>% 
+  summarise(var = var(RT))
+
+
+#dodge <- position_dodge(width=0.1)  
+ggplot(var_RTs, aes(x = failure, y= var, colour = cogload, group = cogload)) +
+  geom_point(alpha = 1) +
+  geom_line() +
+  scale_colour_brewer(palette = "Set1") +
+  ylim(0,1.5)
+
+```
+Let's see if we can model this later. First, let's see how consistent the trend is between participants.
+
+```{r plot individuals, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+med_RTs_pps <- balanced_RTs %>% 
+  group_by(failure, cogload, ppid) %>% 
+  summarise(RT = median(RT))
+
+
+dodge <- position_dodge(width=0.1)  
+ggplot(filter(balanced_RTs), aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .25, position = dodge) +
+  geom_line(data = med_RTs_pps, size = .5, position = dodge) +
+  geom_point(data = med_RTs_pps, size =1, position = dodge) +
+  scale_colour_brewer(palette = "Set1") +
+  facet_wrap(~ ppid)
+
+```
+
+Both effects seem pretty consistent, though the cognitive load seems to effect some people more than others. 
+
+Since there seems to be a sensible linear relationship between simTTLC and the dependent variable, I'm going to simplify the model to model simTTLC as a continuous predictor rather than factorial. Later on I'll model it has factor levels to see if the inferences change. This has the benefit of being able to also use the sobel sequence data. Below we plot the sobel data (one trial per participant for each simTTLC) with the factorial simTTLC to check they follow a similar pattern.
+
+```{r plot individuals, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(brms)
+library(tidybayes)
+
+#first let's get a handle on how to predict using brms with a basic gamma regression
+m1 <- brm(data = balanced_RTs, RT ~ simTTLC, 
+          family = Gamma(link = "identity"))
+
+
+#plot analytic distributions
+summary(m1)
+vcov(m1)
+shape2 <- summary(m1)$spec_pars[1]
+fixed <- fixef(m1)[,1]
+
+TTLC_levels <- unique(balanced_RTs$simTTLC)
+RT_len = 10000
+brm_dens <- data.frame(simTTLC = rep(TTLC_levels, each = RT_len),
+                      RT = rep(seq(0,10,length.out =RT_len), length(TTLC_levels)))
+brm_dens <- brm_dens %>% 
+  mutate(ydist = dgamma(x=RT, shape = shape2 / 2, rate = (shape2 / 2) / (fixed[1] + fixed[2]*simTTLC)),
+         ymean = fixed[1] + fixed[2]*simTTLC)
+
+
+p_analytic <- ggplot(brm_dens, aes(x = RT)) +
+  geom_line(aes(y = ydist), alpha = .8, col = "blue") +
+  geom_density(data = balanced_RTs, aes(x = RT), col = "red", alpha = .5) +
+  facet_wrap(~simTTLC, scales = "free") +
+  ylab("density")
+
+  
+
+#I don't use the variance covariance matrix, or take into account the uncertainty in the fixed effects, so these will be slightly different.
+m1_predict <- balanced_RTs  %>%
+  add_predicted_draws(m1) 
+
+p_analytic +
+  geom_density(data = m1_predict, aes(x = .prediction), col = "green")
+
+```
+
+```{r m1 factor, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+#detach(package:lme4, unload =TRUE)
+#detach(package:Matrix, unload =TRUE)
+#first let's get a handle on how to predict using brms with a basic gamma regression
+
+balanced_RTs$ttlc_factor <- as.factor(balanced_RTs$simTTLC)
+m1_factor <- brm(data = balanced_RTs, RT ~ ttlc_factor, 
+          family = Gamma(link = "identity"))
+
+
+#plot analytic distributions
+summary(m1_factor)
+
+m1_factor_predict <- balanced_RTs  %>%
+  add_predicted_draws(m1_factor) 
+
+ggplot(data = balanced_RTs) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m1_predict, aes(x = .prediction), alpha = .8, col = "green") +
+  geom_density(data = m1_factor_predict, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~simTTLC, scales = "free") +
+  scale_colour_identity(name = '',
+  labels = c('Data','Continuous','Factor'), breaks = c("red","green", "blue"),
+  guide = 'legend') +
+  ylab("density")
+
+  
+loo(m1, m1_factor)
+loo_model_weights(m1, m1_factor) #on the basis that m1 is marginally better I am going to use simTTLC as a continuous predictor, because then we can include the random RTs.
+waic(m1, m1_factor)
+
+
+```
+
+```{r m2 cogload, echo=FALSE, message=FALSE, warning=FALSE}
+
+#include a factor for cogload
+balanced_RTs$cogload <- as.factor(balanced_RTs$cogload)
+
+m2 <- brm(data = balanced_RTs, RT ~ simTTLC + cogload, 
+          family = Gamma(link = "identity"),
+          prior = c(set_prior("cauchy(0,2.5)", class = "shape")))
+
+
+priors <- prior_summary(m2)
+
+
+#check
+summary(m2)
+pp_check(m2)
+
+#plot predictions.
+m2_predict <- balanced_RTs  %>%
+  add_predicted_draws(m2) 
+
+ggplot(data = balanced_RTs) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m1_predict, aes(x = .prediction), alpha = .8, col = "green") +
+  geom_density(data = m2_predict, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~simTTLC, scales = "free") +
+  scale_colour_identity(name = '',
+  labels = c('Data','RT ~ ttlc','RT ~ ttlc + cogload'), breaks = c("red","green", "blue"),
+  guide = 'legend') +
+  ylab("density")
+
+  
+loo(m1, m2)
+loo_model_weights(m1, m2) #on the basis that m1 is marginally better I am going to use simTTLC as a continuous predictor, because then we can include the random RTs.
+
+
+
+```
+
+```{r m2 factor, echo=FALSE, message=FALSE, warning=FALSE}
+
+#include a factor for cogload
+m2_factor <- brm(data = balanced_RTs, RT ~ ttlc_factor + cogload, 
+          family = Gamma(link = "identity"))
+
+
+#check
+summary(m2_factor)
+pp_check(m2_factor)
+
+#plot predictions.
+m2_factor_predict <- balanced_RTs  %>%
+  add_predicted_draws(m2_factor) 
+
+ggplot(data = balanced_RTs) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m2_predict, aes(x = .prediction), alpha = .8, col = "green") +
+  geom_density(data = m2_factor_predict, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~simTTLC, scales = "free") +
+  scale_colour_identity(name = '',
+  labels = c('Data','RT ~ ttlc','RT ~ ttlc + cogload'), breaks = c("red","green", "blue"),
+  guide = 'legend') +
+  ylab("density")
+
+  
+loo(m2, m2_factor)
+loo_model_weights(m2, m2_factor) #there is still equivalence, so let's use continuous.
+
+
+```
+
+
+```{r load and plot random_RTs, echo=FALSE, message=FALSE, warning=FALSE}
+
+random_RTs <- read_csv("random_RTs.csv")  
+
+#get rid of premature takeovers. Not interested in those.
+random_RTs <- random_RTs %>% 
+  filter(premature == 0)
+
+data_RTs <- full_join(balanced_RTs, random_RTs)
+
+med_RTs <- data_RTs %>% 
+  group_by(simTTLC, cogload) %>% 
+  summarise(RT = median(RT))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(data_RTs, aes(x = simTTLC, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  #geom_line(data = med_RTs, size = 1, position = dodge) +
+  #geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+
+
+```
+
+
+```{r m3 with cogload, echo=FALSE, message=FALSE, warning=FALSE}
+
+ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+  b = b / 180 * pi
+  
+  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+}
+data_RTs <- data_RTs %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(data_RTs, aes(x = ttlc_calc, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  #geom_line(data = med_RTs, size = 1, position = dodge) +
+  #geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+
+ggplot(data_RTs, aes(x = sab, y = simTTLC)) + geom_point(alpha = .5) +
+  geom_abline(slope = 1) +
+  geom_point(aes(y=ttlc_calc), col = "blue")
+  
+#init_values <- c( )
+
+if (!file.exists("m3_ttlc_calc.rda")) {
+  m3_ttlc_calc <- brm(formula = myform, data = data_RTs,
+          family = weibull(link = "identity"))
+  save(m3_ttlc_calc, file ="m3_ttlc_calc.rda")
+} else {load("m3_ttlc_calc.rda")}
+
+get_prior(RT ~ ttlc_calc + cogload, data =  data_RTs, family = Gamma(link = "identity"))
+
+brmsfamily("Gamma")
+
+myform <- bf(RT ~ ttlc_calc * cogload, center = FALSE)
+no_inter <- bf(RT ~ ttlc_calc + cogload, center = FALSE)
+
+m3_no_inter <- brm(formula = no_inter, data = data_RTs,
+          family = weibull(link = "identity"))
+
+loo(m3_no_inter, m3_ttlc_calc)
+loo_model_weights(m3_no_inter, m3_ttlc_calc)
+
+#plot analytic distributions
+#prior_summary(m_gamma_identity)
+
+#make_stancode(RT ~ ttlc_calc, data = data_RTs, family = Gamma(link = "log"))
+
+summary(m3_ttlc_calc)
+pp_check(m3_ttlc_calc)
+marginal_effects(m3_ttlc_calc)
+
+m3_ttlc_calc_predict <- data_RTs  %>%
+  add_predicted_draws(m3_ttlc_calc) 
+
+m3_plot_data <- sample_draws(m3_ttlc_calc_predict, 20)
+
+dodge <- position_dodge(width=0.1)  
+ggplot(data_RTs, aes(x = ttlc_calc, y= RT, colour = cogload, group = cogload)) +
+  geom_point(data = m3_plot_data, aes(y = .prediction), alpha = .01, col = "blue") +
+  geom_point(alpha = .1, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+
+
+#retrieves ttlc_calc balanced levels.
+sab_levels <- data_RTs %>% 
+  filter(design == "balanced") %>% 
+  select(sab) %>% 
+  unique(.)
+
+ttlc_calc_levels <- apply(sab_levels, 1, ttlc_from_offset) #quite a bit different from the previous simTTLC.
+
+m3_balanced_predictions <- filter(m3_ttlc_calc_predict, ttlc_calc %in% ttlc_calc_levels)
+
+ggplot(data = filter(data_RTs, design == "balanced")) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m3_balanced_predictions, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free") +
+  ylab("density")
+
+```
+
+
+
+
+```{r checking families, echo=FALSE, message=FALSE, warning=FALSE}
+
+#a model with Gamma(link = "identity") fails to initialise even with fixed effect models with an interaction term. Let's see if it's the most suitable family before investigating further
+
+
+m_weib_identity = brm(data = data_RTs, RT  ~ ttlc_calc, 
+            family = weibull(link = "identity")) #weibull distribution with identity link.
+
+m_gamma_identity = brm(data = data_RTs, RT  ~ ttlc_calc, 
+            family = Gamma(link = "identity"))
+
+m_slogn_identity = brm(data = data_RTs, RT  ~ ttlc_calc, 
+            family = shifted_lognormal(link = "identity"))
+
+m_exgauss_identity = brm(data = data_RTs, RT  ~ ttlc_calc, 
+            family = exgaussian(link = "identity"))
+
+
+summary(m_weib_identity)
+summary(m_gamma_identity)
+summary(m_slogn_identity)
+summary(m_exgauss_identity)
+
+loo_model_weights(m_weib_identity, m_gamma_identity, m_slogn_identity,m_exgauss_identity)
+
+
+ttlcs <- data_RTs %>% 
+  select(ttlc_calc) %>% 
+  unique(.)
+#plot ribbons
+weib_predict <- ttlcs %>% 
+  add_predicted_draws(m_weib_identity)
+
+gamma_predict <- ttlcs %>% 
+  add_predicted_draws(m_gamma_identity)
+
+slogn_predict <- ttlcs %>% 
+  add_predicted_draws(m_slogn_identity)
+
+exgauss_predict <- ttlcs %>% 
+  add_predicted_draws(m_exgauss_identity)
+
+
+p_weibull <-ggplot(data_RTs, aes(x = ttlc_calc, y= RT)) +
+  stat_lineribbon(data = weib_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "red", fill = "red") +
+  xlim(0,20) + ylim(0,15) +
+  geom_point(alpha = .8, col = "black")
+
+p_gamma <-ggplot(data_RTs, aes(x = ttlc_calc, y= RT)) +
+  stat_lineribbon(data = gamma_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "blue", fill = "blue") +
+  xlim(0,20) + ylim(0,15) +
+  geom_point(alpha = .8, col = "black")
+
+
+p_slogn <-ggplot(data_RTs, aes(x = ttlc_calc, y= RT)) +
+  stat_lineribbon(data = gamma_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "green", fill = "green") +
+  xlim(0,20) + ylim(0,15) +
+  geom_point(alpha = .8, col = "black")
+
+p_exgauss <-ggplot(data_RTs, aes(x = ttlc_calc, y= RT)) +
+  stat_lineribbon(data = exgauss_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "purple", fill = "purple") +
+  xlim(0,20) + ylim(0,15) +
+  geom_point(alpha = .8, col = "black")
+
+
+p_all <- cowplot::plot_grid(p_weibull, p_gamma, p_slogn, p_exgauss, labels = c("Weibull", "Gamma", "Shifted lognormal", "Exgaussian"), nrow = 2)
+
+show(p_all)
+
+
+
+```
+
+
+```{r m3 random intercept and slope, echo=FALSE, message=FALSE, warning=FALSE}
+
+init_f <- function () list(Intercept = rnorm(1, 15, 2.), shape = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
+
+if (!file.exists("m3_ttlc_calc_multi.rda")) {
+  m3_ttlc_calc_multi <- brm(data = data_RTs, formula = form, 
+          family = weibull(link = "identity"), inits = init_f)
+  save(m3_ttlc_calc, file ="m3_ttlc_calc_multi.rda")
+} else {load("m3_ttlc_calc_multi.rda")}
+
+form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc * cogload | ppid), center = FALSE)
+
+
+#plot analytic distributions
+summary(m3_ttlc_calc_multi)
+pp_check(m3_ttlc_calc_multi)
+get_prior(formula = form, data = data_RTs)
+
+data_RTs  %>%
+  add_predicted_draws(m3_ttlc_calc_multi) %>% 
+  ggplot(aes(x = RT, y = .prediction)) +
+  geom_point(alpha = .5)
+
+m3_multi_plot_data <- sample_draws(m3_multi_predict, 20)
+
+dodge <- position_dodge(width=0.1)  
+ggplot(data_RTs, aes(x = ttlc_calc, y= RT, colour = cogload, group = cogload)) +
+  geom_point(data = m3_plot_data, aes(y = .prediction), alpha = .01, col = "blue") +
+  geom_point(alpha = .1, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+
+pp_check(m3_ttlc_calc_multi, type = "error_hist")
+
+```

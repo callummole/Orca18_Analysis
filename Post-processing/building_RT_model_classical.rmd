@@ -1,0 +1,437 @@
+---
+title: 'Building a statistical model of reaction times to automation failures.'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document steps through the statistical model building for takeover reaction times in a silent failure experiment, pre-reg can be found at https://osf.io/mydfw. We are primarily interested in how cognitive load affects reaction times at different levels of failure.
+
+First we load the data.
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+balanced_RTs <- read_csv("balanced_RTs.csv")  
+
+#add failure factor.
+balanced_RTs$failure <- factor(balanced_RTs$simTTLC, labels = c("1","2","3","4"))
+
+#get rid of premature takeovers. Not interested in those.
+balanced_RTs <- balanced_RTs %>% 
+  filter(premature == 0)
+
+knitr::kable(head(balanced_RTs))
+
+
+```
+Let's plot a scatter plot to get an idea of the behaviour. We draw trend lines through the medians of each factor.
+
+```{r scatter plots, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+med_RTs <- balanced_RTs %>% 
+  group_by(failure, cogload) %>% 
+  summarise(RT = median(RT))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(balanced_RTs, aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  geom_line(data = med_RTs, size = 1, position = dodge) +
+  geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+  
+```
+There seems to be a consistent rise in RT for less severe failures. Cognitive load seems to increase RTs only a small bit. 
+
+However, there are some complications. The variances increase in line with the failure levels. (see below plot). 
+
+
+```{r plot variance, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+var_RTs <- balanced_RTs %>% 
+  group_by(failure, cogload) %>% 
+  summarise(var = var(RT))
+
+
+#dodge <- position_dodge(width=0.1)  
+ggplot(var_RTs, aes(x = failure, y= var, colour = cogload, group = cogload)) +
+  geom_point(alpha = 1) +
+  geom_line() +
+  scale_colour_brewer(palette = "Set1") +
+  ylim(0,1.5)
+
+```
+Let's see if we can model this later. First, let's see how consistent the trend is between participants.
+
+```{r plot individuals, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+med_RTs_pps <- balanced_RTs %>% 
+  group_by(failure, cogload, ppid) %>% 
+  summarise(RT = median(RT))
+
+
+dodge <- position_dodge(width=0.1)  
+ggplot(filter(balanced_RTs), aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .25, position = dodge) +
+  geom_line(data = med_RTs_pps, size = .5, position = dodge) +
+  geom_point(data = med_RTs_pps, size =1, position = dodge) +
+  scale_colour_brewer(palette = "Set1") +
+  facet_wrap(~ ppid)
+
+```
+
+Both effects seem pretty consistent, though the cognitive load seems to effect some people more than others. 
+
+Since there seems to be a sensible linear relationship between simTTLC and the dependent variable, I'm going to simplify the model to model simTTLC as a continuous predictor rather than factorial. Later on I'll model it has factor levels to see if the inferences change. This has the benefit of being able to also use the sobel sequence data. Below we plot the sobel data (one trial per participant for each simTTLC) with the factorial simTTLC to check they follow a similar pattern.
+
+```{r load and plot random_RTs, echo=FALSE, message=FALSE, warning=FALSE}
+
+random_RTs <- read_csv("random_RTs.csv")  
+
+#get rid of premature takeovers. Not interested in those.
+random_RTs <- random_RTs %>% 
+  filter(premature == 0)
+
+data_RTs <- full_join(balanced_RTs, random_RTs)
+
+med_RTs <- data_RTs %>% 
+  group_by(simTTLC, cogload) %>% 
+  summarise(RT = median(RT))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(data_RTs, aes(x = simTTLC, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  #geom_line(data = med_RTs, size = 1, position = dodge) +
+  #geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+
+
+```
+```{r basic regression, echo=FALSE, message=FALSE, warning=FALSE}
+
+#basic linear model.
+library(brms)
+library(lme4)
+
+#let;s fit one participant so we can easily see the noise.
+data_RTs$simTTLC <- as.double(data_RTs$simTTLC)
+pp_RTs <- filter(data_RTs, ppid == 10)
+m1 <- glm(data = pp_RTs, RT ~ simTTLC, 
+          family = gaussian())
+
+
+
+pd <- with(pp_RTs,
+           data.frame(simTTLC = seq(min(na.omit(simTTLC)), max(na.omit(simTTLC)),
+                                       length = 100)))
+pd <- cbind(pd, predict(m1, pd, type = "response", se.fit = TRUE)[1:2])
+
+pd <- pd %>% 
+  mutate(upper = fit + (1.96 * se.fit),
+         lower = fit - (1.96 * se.fit))
+
+ggplot(pp_RTs, aes(x = simTTLC, y = RT)) +
+    geom_ribbon(data = pd, aes(ymin = lower, ymax = upper, x = simTTLC),
+                fill = "steelblue2", alpha = 0.2, inherit.aes = FALSE) +
+    geom_line(data = pd, aes(y = fit, x = simTTLC)) +
+    geom_point(alpha = .5) 
+    
+hist(residuals(m1))
+
+summary(m1)
+
+```
+
+```{r basic regression, echo=FALSE, message=FALSE, warning=FALSE}
+
+#basic linear model.
+library(brms)
+library(lme4)
+
+#let;s fit one participant so we can easily see the noise.
+data_RTs$simTTLC <- as.double(data_RTs$simTTLC)
+pp_RTs <- filter(data_RTs, ppid == 10)
+m2 <- glm(data = pp_RTs, RT ~ simTTLC, 
+          family = gaussian(link = "identity"))
+
+
+
+pd <- with(pp_RTs,
+           data.frame(simTTLC = seq(min(na.omit(simTTLC)), max(na.omit(simTTLC)),
+                                       length = 100)))
+pd <- cbind(pd, predict(m2, pd, type = "response", se.fit = TRUE)[1:2])
+
+pd <- pd %>% 
+  mutate(upper = fit + (1.96 * se.fit),
+         lower = fit - (1.96 * se.fit))
+
+ggplot(pp_RTs, aes(x = simTTLC, y = RT)) +
+    geom_ribbon(data = pd, aes(ymin = lower, ymax = upper, x = simTTLC),
+                fill = "steelblue2", alpha = 0.2, inherit.aes = FALSE) +
+    geom_line(data = pd, aes(y = fit, x = simTTLC)) +
+    geom_point(alpha = .5) 
+
+
+resid_var = summary(m1)$dispersion
+coef <- m1$coef
+
+df <- data.frame(simTTLC = seq(min(na.omit(pp_RTs$simTTLC)), max(na.omit(pp_RTs$simTTLC)),
+                                       length = 1000))
+
+df <- df %>% 
+  mutate(ydist = rnorm(n=1000, mean = (coef[1] + coef[2]*simTTLC), sd = sqrt(resid_var)),
+         ymean = coef[1] + coef[2]*simTTLC)
+
+ggplot(df, aes(x = simTTLC, y = ydist)) +
+  geom_point(alpha = .1) +
+  geom_line(aes(x = simTTLC, y=ymean)) +
+  geom_point(data = pp_RTs, aes(x = simTTLC, y = RT), col = "red", alpha = .2)
+
+```
+
+```{r basic regression, echo=FALSE, message=FALSE, warning=FALSE}
+
+#basic linear model.
+library(lme4)
+
+#let;s fit one participant so we can easily see the noise.
+data_RTs$simTTLC <- as.double(data_RTs$simTTLC)
+pp_RTs <- filter(data_RTs, ppid == 10)
+
+m2 <- glm(data = data_RTs, RT ~ simTTLC, 
+          family = Gamma(link = "identity"))
+
+
+
+pd <- with(data_RTs,
+           data.frame(simTTLC = seq(min(na.omit(simTTLC)), max(na.omit(simTTLC)),
+                                       length = 100)))
+pd <- cbind(pd, predict(m2, pd, type = "response", se.fit = TRUE)[1:2])
+
+pd <- pd %>% 
+  mutate(upper = fit + (1.96 * se.fit),
+         lower = fit - (1.96 * se.fit))
+
+ggplot(pp_RTs, aes(x = simTTLC, y = RT)) +
+    geom_ribbon(data = pd, aes(ymin = lower, ymax = upper, x = simTTLC),
+                fill = "steelblue2", alpha = 0.2, inherit.aes = FALSE) +
+    geom_line(data = pd, aes(y = fit, x = simTTLC)) +
+    geom_point(alpha = .5) 
+
+shape1 =1 / summary(m2)$dispersion
+coef <- m2$coef
+
+df <- data.frame(simTTLC = seq(min(na.omit(pp_RTs$simTTLC)), max(na.omit(pp_RTs$simTTLC)),
+                                       length = 1000))
+
+df <- df %>% 
+  mutate(ydist = rgamma(n=1000, shape = shape1, rate = shape1 / (coef[1] + coef[2]*simTTLC)),
+         ymean = coef[1] + coef[2]*simTTLC)
+
+ggplot(df, aes(x = simTTLC, y = ydist)) +
+  geom_point(alpha = .1) +
+  geom_line(aes(x = simTTLC, y=ymean)) +
+  geom_point(data = data_RTs, aes(x = simTTLC, y = RT), col = "red", alpha = .2)
+
+
+#plot the distribution at the different levels.
+TTLC_levels <- unique(balanced_RTs$simTTLC)
+
+    
+```
+
+
+```{r plot distribution at each level, echo=FALSE, message=FALSE, warning=FALSE}
+#plot the distribution at the different levels.
+TTLC_levels <- unique(balanced_RTs$simTTLC)
+shape1 =1 / summary(m2)$dispersion
+coef <- m2$coef
+
+#The following does it by brute force simulation
+#df <- df %>% 
+#  mutate(ydist = rgamma(n=length(simTTLC), shape = shape1, rate = shape1 / (coef[1] + coef[2]*simTTLC)),
+#         ymean = coef[1] + coef[2]*simTTLC)
+
+
+#this does the same but analytically.
+RT_len = 10000
+
+df_dens <- data.frame(simTTLC = rep(TTLC_levels, each = 10000),
+                      RT = rep(seq(0,10,length.out =10000), length(TTLC_levels)))
+df_dens <- df_dens %>% 
+  mutate(ydist = dgamma(x=RT, shape = shape1, rate = shape1 / (coef[1] + coef[2]*simTTLC)),
+         ymean = coef[1] + coef[2]*simTTLC)
+
+data_9 <- df_dens %>% 
+  filter(simTTLC == TTLC_levels[1])
+
+sims_9 <- rgamma(n = 1000000, shape = shape1, rate = shape1 / (coef[1] + coef[2]*TTLC_levels[1]))
+mean(sims_9)
+
+
+p_analytic <- ggplot(df_dens, aes(x = RT)) +
+  geom_line(aes(y = ydist), alpha = .8, col = "blue") +
+  geom_density(data = balanced_RTs, aes(x = RT), col = "red", alpha = .5) +
+  facet_wrap(~simTTLC, scales = "free") +
+  ylab("density")
+
+vcov(m2)  
+show(p_analytic)
+
+m2_predict <- predict(m2, newdata = data.frame(simTTLC = TTLC_levels))
+    
+```
+
+```{r plot distribution at each level for brms, echo=FALSE, message=FALSE, warning=FALSE}
+
+#plot the distribution at the different levels.
+library(brms)
+detach(package:lme4, unload =TRUE)
+detach(package:Matrix, unload =TRUE)
+conflict_prefer("rond","base")
+
+#check the brms distribution gives similar.
+m3 <- brm(data = data_RTs, RT ~ simTTLC, 
+          family = Gamma(link = "identity"))
+
+summary(m3)
+
+shape2 <- summary(m3)$spec_pars[1]
+
+fixed <- fixef(m3)[,1]
+
+
+
+RT_len = 10000
+
+brm_dens <- data.frame(simTTLC = rep(TTLC_levels, each = RT_len),
+                      RT = rep(seq(0,10,length.out =RT_len), length(TTLC_levels)))
+brm_dens <- df_dens %>% 
+  mutate(ydist = dgamma(x=RT, shape = shape2 / 2, rate = (shape2 / 2) / (fixed[1] + fixed[2]*simTTLC)),
+         ymean = fixed[1] + fixed[2]*simTTLC)
+
+p_analytic + 
+  geom_line(data = brm_dens, aes(y = ydist), alpha = .8, col = "green") 
+  
+
+
+    
+```
+
+
+
+```{r fit individual regressions, echo=FALSE, message=FALSE, warning=FALSE}
+
+#plot the distribution at the different levels.
+library(lme4)
+
+#fit individual gamma regressions, assess shape
+#data frame for fit.
+unique(data_RTs$ppid)
+fitglm <- function(pid){
+  psubset <- filter(data_RTs, ppid == pid)
+  fit <- glm(data = psubset, RT ~ simTTLC, 
+          family = Gamma(link = "identity"))
+  shape <- 1/summary(fit)$dispersion
+  c(fit$coef, shape)
+}
+
+fits <- data.frame(pp = 1:20) %>% 
+  apply(., 1, fitglm) %>% 
+  t(.) %>% 
+  as.tibble(.) %>% 
+  rename(Intercept = "(Intercept)",
+         shape = V3)
+  
+fits
+#plot
+par(mfrow=c(3,1))
+ggplot(fits, aes(x = Intercept)) + geom_density()#geom_histogram(binwidth = .05)
+ggplot(fits, aes(x = simTTLC)) + geom_density()#geom_histogram(binwidth = .01)
+ggplot(fits, aes(x = shape)) + geom_density()#geom_histogram(binwidth = 2) + xlim(c(NA,100))
+
+ggplot(fits, aes(x = Intercept, y = simTTLC)) + geom_point() # negative correlation. 
+ggplot(fits, aes(x = shape, y = simTTLC)) + geom_point()  # one participant seems to respond very precisely and be sensitive to the manipulation 
+ggplot(fits, aes(x = shape, y = Intercept)) + geom_point() + xlim(c(NA,100)) 
+
+#plot pp3.
+plot_pp <- function(p){
+  p_fit <- fits[p,]
+  p_sub <- filter(balanced_RTs, ppid == p)
+  RT_len = 10000
+  pp_dens <- data.frame(simTTLC = rep(TTLC_levels, each = RT_len),
+  RT = rep(seq(0,10,length.out =RT_len), length(TTLC_levels)))
+  
+  pp_dens <- pp_dens %>% 
+    mutate(ydist = dgamma(x=RT, shape = p_fit$shape, rate = p_fit$shape / (p_fit$Intercept + p_fit$simTTLC*simTTLC)),
+         ymean = fixed[1] + fixed[2]*simTTLC)
+
+  ggplot(pp_dens, aes(x = RT)) +
+  geom_line(aes(y = ydist), alpha = .8, col = "blue") +
+  geom_density(data = p_sub, aes(x = RT), col = "red", alpha = .5) +
+  facet_wrap(~simTTLC, scales = "free") +
+  ylab("density")
+}
+
+plot_pp(15)
+  
+
+    
+```
+
+```{r analytic distribution from individual regressions, echo=FALSE, message=FALSE, warning=FALSE}
+
+derive_dens <- function(ttlc){
+  
+  RT_len = 10000
+  RT = seq(0,10,length.out =RT_len)
+  dens_mat <- matrix(, nrow = RT_len, ncol = 20)
+  for (p in 1:20){
+    p_fit = fits[p,]
+    dens_mat[,p] = dgamma(x=RT, shape = p_fit$shape, rate = p_fit$shape / (p_fit$Intercept + p_fit$simTTLC*ttlc))  
+  }
+  avg_dens <- apply(dens_mat,1, mean)
+  
+}
+
+TTLC_levels<-matrix(TTLC_levels)
+mydens <- as.tibble(apply(TTLC_levels, 1, derive_dens))
+colnames(mydens) <- as.character(TTLC_levels)
+mydens <- gather(mydens, "simTTLC","ydist")
+mydens$RT <- rep(seq(0,10,length.out =RT_len), 4)
+
+p_analytic + 
+  geom_line(data = mydens, aes(y = ydist, x = RT), alpha = 1, col = "green", inherit.aes = FALSE) 
+
+    
+```
+The densities now account for some of the dual bumps, which suggest that this is due to individual variation rather than condition variation (i.e. due to cogload, which is not current modelled). Also the scatter plots between intercept and slope suggest that they correlate.
+
+
+<!-- 
+
+basic regression, with formulas. See how your link function changes things.
+
+
+-->

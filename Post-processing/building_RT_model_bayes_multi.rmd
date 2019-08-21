@@ -1,0 +1,428 @@
+---
+title: 'Building a statistical model of reaction times to automation failures.'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document steps through the statistical model building for takeover reaction times in a silent failure experiment, pre-reg can be found at https://osf.io/mydfw. We are primarily interested in how cognitive load affects reaction times at different levels of failure.
+
+First we load the data.
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+library("brms")
+library("tidybayes")
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+balanced_RTs <- read_csv("balanced_RTs.csv")  
+
+#add failure factor.
+balanced_RTs$failure <- factor(balanced_RTs$simTTLC, labels = c("1","2","3","4"))
+
+#get rid of premature takeovers. Not interested in those.
+balanced_RTs <- balanced_RTs %>% 
+  filter(premature == 0)
+
+knitr::kable(head(balanced_RTs))
+
+
+```
+Let's plot a scatter plot to get an idea of the behaviour. We draw trend lines through the medians of each factor.
+
+```{r scatter plots, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+med_RTs <- balanced_RTs %>% 
+  group_by(failure, cogload) %>% 
+  summarise(RT = median(RT))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(balanced_RTs, aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  geom_line(data = med_RTs, size = 1, position = dodge) +
+  geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+  
+```
+
+
+
+```{r load and plot random_RTs, echo=FALSE, message=FALSE, warning=FALSE}
+
+random_RTs <- read_csv("random_RTs.csv")  
+
+#get rid of premature takeovers. Not interested in those.
+random_RTs <- random_RTs %>% 
+  filter(premature == 0)
+
+data_RTs <- full_join(balanced_RTs, random_RTs)
+
+
+```
+
+
+```{r calc offset, echo=FALSE, message=FALSE, warning=FALSE}
+
+ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+  b = b / 180 * pi
+  
+  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+}
+data_RTs <- data_RTs %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+
+balanced_RTs <- balanced_RTs %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+
+```
+
+
+
+```{r m3 random intercept and slope, echo=FALSE, message=FALSE, warning=FALSE}
+
+init_f <- function () list(Intercept = rnorm(1, 15, 2.), shape = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
+
+form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc * cogload | ppid), center = FALSE)
+
+#this really struggles to initialise sometimes. Set to one chain so that it doesn't need to initialise 4 chains.
+if (!file.exists("m3_multi_weib.rda")) {
+  m3_multi_weib <- brm(data = data_RTs, formula = form, 
+          family = weibull(link = "identity"), inits = init_f,
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+    save(m3_multi_weib, file ="m3_multi_weib.rda")
+} else {load("m3_multi_weib.rda")}
+
+if (!file.exists("m3_multi_gamma.rda")) {
+  m3_multi_gamma <- brm(data = data_RTs, formula = form, 
+          family = Gamma(link = "identity"), inits = init_f,
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+    save(m3_multi_gamma, file ="m3_multi_gamma.rda")
+} else {load("m3_multi_gamma.rda")}
+  
+  
+
+loo_model_weights(m3_multi_weib, m3_multi_gamma)
+
+
+#plot analytic distributions
+#summary(m3_ttlc_calc_multi)
+pp_check(m3_ttlc_calc_multi) # still slightly off, not getting that second trough.
+pp_check(m3_multi_gamma) # still slightly off, not getting that second trough.
+
+#get_prior(formula = form, data = data_RTs)
+
+summary(m3_multi_weib)
+
+m3_weib_predict <- data_RTs  %>%
+  add_predicted_draws(m3_multi_weib) 
+  #ggplot(aes(x = RT, y = .prediction)) +
+  #geom_point(alpha = .5)
+
+###plot predicted values
+### plot the distributions of the balanced RTs
+#retrieves ttlc_calc balanced levels.
+sab_levels <- data_RTs %>% 
+  filter(design == "balanced") %>% 
+  select(sab) %>% 
+  unique(.)
+
+ttlc_calc_levels <- apply(sab_levels, 1, ttlc_from_offset) #quite a bit different from the previous simTTLC.
+
+m3_balanced_predictions <- filter(m3_weib_predict, ttlc_calc %in% ttlc_calc_levels)
+
+ggplot(data = filter(data_RTs, design == "balanced")) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m3_balanced_predictions, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free_y") +
+  ylab("density")
+
+
+m3_weib_plot_data <- sample_draws(m3_weib_predict, 20)
+
+dodge <- position_dodge(width=0.1)  
+ggplot(data_RTs, aes(x = ttlc_calc, y= RT)) +
+  geom_point(data = m3_weib_plot_data, aes(y = .prediction), alpha = .01, col = "blue") +
+  geom_point(alpha = .5, col = "red") 
+
+m3_weib_predict <- data_RTs  %>%
+  add_predicted_draws(m3_multi_weib)
+
+pp_predict <- filter(m3_weib_predict, ppid == 5)
+
+ggplot(pp_predict, aes(x = RT, y= .prediction, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+
+
+### plot fitted values
+m3_weib_fitted <- data_RTs  %>%
+  add_fitted_draws(m3_multi_weib)
+
+means_for_resids <- data_RTs %>% 
+  group_by(ppid, cogload, ttlc_calc) %>% 
+  summarise(mnRT = mean(RT))
+
+
+
+m3_weib_fitted <- means_for_resids  %>% #added to dataframe of means.
+  add_fitted_draws(m3_multi_weib)
+  
+m3_fitted_draws <- sample_draws(m3_weib_fitted, 50)
+
+ggplot(m3_fitted_draws, aes(x = mnRT, y= .value, colour = cogload, group = cogload)) +
+  geom_point(alpha = .05, position = dodge) +
+  geom_abline(slope = 1) +
+  facet_wrap(~ppid) +
+  scale_colour_brewer(palette = "Set1")
+
+#residuals
+ggplot(m3_fitted_draws, aes(x = mnRT, y= mnRT - .value, colour = cogload, group = cogload)) +
+  geom_point(alpha = .05, position = dodge) +
+  geom_abline(slope = 0, intercept = 0) +
+  facet_wrap(~ppid) +
+  scale_colour_brewer(palette = "Set1")
+
+ggplot(m3_fitted_draws) +
+  geom_density(aes(x = mnRT), col = "blue") +
+  geom_density(aes(x = .value), col = "red")
+
+marginal_effects(m3_multi_weib)
+  
+####contrast
+#data_A1 <- dataset[dataset$factorA == levels(dataset$factorA)[1], ]
+#PPD_A1 <- posterior_predict(fit, newdata = data_A1)
+#data_A2 <- data_A1
+#data_A2$factorA[1:nrow(data_A2)]  <- levels(dataset$factorA)[2]
+#PPD_A2 <- posterior_predict(fit, newdata = data_A2)
+#PPD_diff <- PPD_A2 - PPD_A1
+
+condition_list <- data_RTs %>% 
+  select(ttlc_calc, cogload) %>% 
+  unique(.)
+rt_draws <- add_fitted_draws(newdata = condition_list, model = m3_multi_weib, re_formula = NA)
+  
+cogload_contrast <- rt_draws %>% 
+  group_by(.draw, ttlc_calc) %>% 
+  summarise(contrast = .value[cogload == "load"] - .value[cogload == "noload"])
+
+cogload_contrast <- cogload_contrast %>% 
+  group_by(.draw) %>% 
+  summarise(mn_diff = mean(contrast))
+
+ggplot(cogload_contrast, aes(x = mn_diff)) + geom_density()
+
+
+#pp_check(m3_ttlc_calc_multi, type = "error_hist")
+
+```
+
+```{r m3 balanced data, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+init_f <- function () list(Intercept = rnorm(1, 15, 2.), shape = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
+
+
+
+#this really struggles to initialise sometimes. Set to one chain so that it doesn't need to initialise 4 chains.
+
+if (!file.exists("m3_varying_shape.rda")) {
+  my_form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~ (1 | ppid), center = FALSE)
+  m3_varying_shape <- brm(data = data_RTs, formula = my_form, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+    save(m3_varying_shape, file ="m3_varying_shape.rda")
+} else {load("m3_varying_shape.rda")}
+
+
+if (!file.exists("m3_varying_shapewithttlc.rda")) {
+  my_form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~ (1 + ttlc_calc | ppid), center = FALSE)
+  m3.1 <- brm(data = balanced_RTs, formula = my_form, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  
+  m3.11 <- brm(data = filter(balanced_RTs, ppid != 11), formula = my_form, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+    save(m3.1, file ="m3_varying_shapewithttlc.rda")
+} else {load("m3_varying_shapewithttlc.rda")}
+
+save(m3.1, file ="m3_varying_shapewithttlc_balancedonly.rda")
+
+
+
+my_form_factor <- bf(RT ~ failure * cogload + (1 + failure + cogload | ppid), shape ~ failure + (1 | ppid), center = FALSE)
+m3.1.factor <- brm(data = balanced_RTs, formula = my_form_factor, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+save(m3.1.factor, file ="m3_varying_shape_factor.rda")
+
+
+if (!file.exists("m3_varying_shapewithcogload.rda")) {
+  my_form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~ ttlc_calc + cogload + (1 | ppid), center = FALSE)
+  m3.2 <- brm(data = data_RTs, formula = my_form, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+    save(m3.2, file ="m3_varying_shapewithcogload.rda")
+} else {load("m3_varying_shapewithcogload.rda")}
+
+#cannot initialise a model with mixed effects for the shape parameters.
+my_form3 <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~  (1 + cogload | ppid), center = FALSE)
+  m3.3 <- brm(data = data_RTs, formula = my_form3, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+#cannot initialise truncated version  
+my_form4 <- bf(RT  ~ failure * cogload, shape ~ (1 + failure | ppid), center = FALSE)
+  m3.1.2 <- brm(data = balanced_RTs, formula = my_form4, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  
+my_form5 <- bf(RT  ~ failure * cogload + (1 + failure | ppid), shape ~ (1 + failure | ppid), center = FALSE)
+  m3.1.3 <- brm(data = balanced_RTs, formula = my_form5, 
+          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+  
+get_prior(my_form, balanced_RTs, weibull(link="identity"))
+#plot analytic distributions
+#summary(m3_ttlc_calc_multi)
+loo_model_weights(m3_varying_shape, m3_multi_weib) # varying shape massively better.
+loo_model_weights(m3_varying_shape, m3.1) # varying shape massively better.
+loo_model_weights(m3_varying_shape, m3.1, m3.2, m3.3)
+loo(m3_varying_shape, m3.1, m3.2, m3.3)
+
+loo(m3.1, m3.1.2)
+loo_model_weights(m3.1, m3.1.2)
+
+summary(m3.11)
+prior_summary(m3.1)
+
+m3_predict <- balanced_RTs  %>%
+  add_predicted_draws(m3.1) 
+  #ggplot(aes(x = RT, y = .prediction)) +
+  #geom_point(alpha = .5)
+
+pp_check(m3.11)
+
+
+
+m3_predict <- balanced_RTs  %>%
+  add_predicted_draws(m3.11)
+
+m3_nopp <- balance  %>%
+  add_predicted_draws(m3.11) 
+
+pp_check(m3.1.2)
+
+###plot predicted values
+### plot the distributions of the balanced RTs
+#retrieves ttlc_calc balanced levels.
+#ribbon plot
+ggplot(balanced_RTs, aes(x = ttlc_calc, y= RT)) +
+  stat_lineribbon(data = m3_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "magenta", fill = "red") +
+  xlim(0,15) + ylim(0,10) +
+  geom_point(alpha = .25, col = "black")
+
+
+m3_balanced_predictions <- filter(m3_predict, ttlc_calc %in% ttlc_calc_levels)
+
+ggplot(data = balanced_RTs) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m3_balanced_predictions, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free") +
+  ylab("density")
+
+ggplot(data = balanced_RTs) +
+  geom_density(aes(x = RT), col = "red", alpha = .5) +
+  geom_density(data = m3_predict, aes(x = .prediction), alpha = .8, col = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free") +
+  ylab("density")
+
+predict_draws <- sample_draws(m3_predict, 20)
+
+#avoid repeating the original data for every draw.
+ggplot(predict_draws) +
+  geom_density(aes(x = .prediction, group = .draw), col = alpha("blue",.1)) +
+  geom_density(data = balanced_RTs, aes(x = RT), col = "red")
+
+ggplot(predict_draws) +
+  geom_density(aes(x = .prediction, group = .draw), col = alpha("blue",.1)) +
+  geom_density(data = balanced_RTs, aes(x = RT), col = "red") +
+  facet_wrap(~ppid)
+
+ggplot(filter(predict_draws, design == "balanced")) +
+  geom_density(dat = balanced_RTs, aes(x = RT), col = "red") +
+  geom_density(aes(x = .prediction, group = .draw), col = alpha("blue",.1)) +
+  facet_grid(cogload~ttlc_calc, scales = "free")
+
+### plot fitted values
+m3_fitted <- balanced_RTs %>%
+  add_fitted_draws(m3.1.2)
+
+means_for_resids <- balanced_RTs %>% 
+  group_by(ppid, cogload, failure) %>% 
+  summarise(mnRT = mean(RT))
+
+m3_fitted <- means_for_resids  %>% #added to dataframe of means.
+  add_fitted_draws(m3.1.2)
+  
+fitted_draws <- sample_draws(m3_fitted, 50)
+
+ggplot(fitted_draws, aes(x = mnRT, y= .value, colour = cogload, group = cogload)) +
+  geom_point(alpha = .05, position = dodge) +
+  geom_abline(slope = 1) +
+  facet_wrap(~ppid) +
+  scale_colour_brewer(palette = "Set1")
+
+#residuals
+ggplot(fitted_draws, aes(x = mnRT, y= mnRT - .value, colour = cogload, group = cogload)) +
+  geom_point(alpha = .05, position = dodge) +
+  geom_abline(slope = 0, intercept = 0) +
+  facet_wrap(~ppid) +
+  scale_colour_brewer(palette = "Set1")
+
+ggplot(fitted_draws) +
+  geom_density(aes(x = mnRT), col = "red") +
+  geom_density(aes(x = .value), col = "blue")
+
+marginal_effects(m3_varying_shape)
+pp_check(m3_varying_shape, type = "error_hist")
+
+
+condition_list <- data_RTs %>% 
+  select(ttlc_calc, cogload) %>% 
+  unique(.)
+rt_draws <- add_fitted_draws(newdata = condition_list, model = m3.1, re_formula = NA)
+  
+cogload_contrast <- rt_draws %>% 
+  group_by(.draw, ttlc_calc) %>% 
+  summarise(contrast = .value[cogload == "load"] - .value[cogload == "noload"])
+
+cogload_contrast <- cogload_contrast %>% 
+  group_by(.draw) %>% 
+  summarise(mn_diff = mean(contrast))
+
+abovezero <- mean(cogload_contrast$mn_diff > 0)
+
+ggplot(cogload_contrast, aes(x = mn_diff)) + geom_density()
+
+```
