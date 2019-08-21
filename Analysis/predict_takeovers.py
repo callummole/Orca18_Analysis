@@ -9,10 +9,8 @@ import scipy.stats
 import scipy.special
 import scipy.signal
 
-from reconstruct_trajectory import get_automation_trajectory
-expdata = pd.read_parquet(Path(__file__).parent/'../Data/orca_raw_longformat.parq')
+from reconstruct_trajectory import get_untouched_trajectories, trialcols
 
-trialcols = "ppid radius yawrate_offset cogload block count".split()
 
 def get_track(radius, is_mirrored):
     myStraight  = simTrackMaker.lineStraight(startpos = [0,0], length= 16)
@@ -21,63 +19,13 @@ def get_track(radius, is_mirrored):
     Course_midline = np.vstack((myStraight.midline, myBend.midline))
     return Course_midline, myBend.CurveOrigin
 
-def get_untouched_trajectories():
-    cpath = 'untouchedhackcache.pickle'
-    try:
-        return pickle.load(open(cpath, 'rb'))
-    except FileNotFoundError:
-        pass
-    
-    data = {}
-    for tg, td in expdata.groupby(trialcols):
-        traj = get_automation_trajectory(td)
-        #plt.plot(traj.World_x, traj.World_z)
-        #plt.plot(td.World_x, td.World_z)
-        td['ts'] = np.cumsum(td.dt)
-        try:
-            onset_t = td.ts.values[td.timestamp_trial.values.searchsorted(td.OnsetTime.iloc[0])]
-        except IndexError:
-            onset_t = np.inf
-
-        try:
-            tot = td.ts[td.AutoFlag != 1].iloc[0]
-        except IndexError:
-            tot = np.inf
-        data[tg] = {
-                'traj': traj,
-                'takeover_time': tot,
-                'onset_time': onset_t,
-                **dict(zip(trialcols, tg))
-                }
-        #auto = traj.ts.values < tot
-        #plt.plot(traj.ts[auto], lane_bias[auto])
-    pickle.dump(data, open(cpath, 'wb'))
-    return data
-    #plt.plot(midline[:,0], midline[:,1])
-
-bias_at_takeover = []
-
 untouched = get_untouched_trajectories()
-for g, td in untouched.items():
-    traj = td['traj']
-
-    
-    traj['lane_bias_change'] = np.gradient(traj.lane_bias.values)/traj.dt.values
-    closing_edge = np.sign(traj.lane_bias_change.values)*1.5
-    margin = closing_edge - traj.lane_bias.values
-    ttc = margin/(traj.lane_bias_change.values)
-    ttc[ttc < 1e-5] = 1e-5 # Hack!
-    traj['ttc'] = ttc
-    # Hack: There's something funny going on in the beginning
-    # causing peaks in the ttc
-    traj = traj.iloc[traj.ts.values.searchsorted(2.0):]
-    td['traj'] = traj
 
 
 parts = [
-    (v['takeover_time'], v['traj'], v['onset_time'], v['yawrate_offset'], g)
+    (v['takeover_time'], v['traj'], v['onset_time'], v['sab'], g)
     for g, v in untouched.items()
-    if v['cogload'] == 'None' and v['block'] > 1
+    if v['cogload'] == 'None'
     ]
 times, trials, onsets, offsets, dump = zip(*parts[:10])
 
@@ -174,7 +122,6 @@ def param_likelihood(x):
     res = -np.sum(np.log([
         densitier(*x)(t) for densitier, t in zip(densitiers, times)
         ]))
-    print(x, res)
     return res
 
 def map_takeovers(*x):
@@ -229,6 +176,7 @@ wtf.x = demangle(wtf.x)
 params = wtf.x
 """
 
+"""
 #rng = np.linspace(0.01, 1.0, 30)
 X, Y = np.mgrid[0.001:0.5:100j,0.001:0.5:100j]
 losses = [param_likelihood((x, params[1], y, params[3])) for x, y in zip(X.ravel(), Y.ravel())]
@@ -239,6 +187,7 @@ ax = plt.gcf().add_subplot(111, projection='3d')
 losses = np.array(losses)
 ax.plot_surface(X, Y, losses.reshape(X.shape), cmap=cm.coolwarm, antialiased=False)
 plt.show()
+"""
 
 thm, ths, rtm, rts, *_ = params
 
