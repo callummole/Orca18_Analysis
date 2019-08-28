@@ -1,0 +1,311 @@
+---
+title: 'Building a statistical model of reaction times to automation failures.'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document steps through the statistical model building for takeover reaction times in a silent failure experiment, pre-reg can be found at https://osf.io/mydfw. We are primarily interested in how cognitive load affects reaction times at different levels of failure.
+
+First we load the data.
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+library("brms")
+library("tidybayes")
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+balanced_RTs <- read_csv("balanced_RTs.csv")  
+
+#add failure factor.
+balanced_RTs$failure <- factor(balanced_RTs$simTTLC, labels = c("1","2","3","4"))
+
+#get rid of premature takeovers. Not interested in those.
+balanced_RTs <- balanced_RTs %>% 
+  filter(premature == 0)
+
+knitr::kable(head(balanced_RTs))
+
+
+```
+Let's plot a scatter plot to get an idea of the behaviour. We draw trend lines through the medians of each factor.
+
+```{r scatter plots, echo=FALSE, message=FALSE, warning=FALSE}
+
+#median data frame.
+med_RTs <- balanced_RTs %>% 
+  group_by(failure, cogload) %>% 
+  summarise(RT = median(RT))
+
+dodge <- position_dodge(width=0.1)  
+ggplot(balanced_RTs, aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .1, position = dodge) +
+  geom_line(data = med_RTs, size = 1, position = dodge) +
+  geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1")
+  
+```
+
+
+
+```{r load and plot random_RTs, echo=FALSE, message=FALSE, warning=FALSE}
+
+random_RTs <- read_csv("random_RTs.csv")  
+
+#get rid of premature takeovers. Not interested in those.
+random_RTs <- random_RTs %>% 
+  filter(premature == 0)
+
+data_RTs <- full_join(balanced_RTs, random_RTs)
+
+
+```
+
+
+```{r calc offset, echo=FALSE, message=FALSE, warning=FALSE}
+
+ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+  b = b / 180 * pi
+  
+  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+}
+data_RTs <- data_RTs %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+
+balanced_RTs <- balanced_RTs %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+
+```
+
+
+```{r simple brms, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+my_form <- bf(RT ~ ttlc_calc)
+my_inits = list(list(b = c(1,1), shape = 1))
+#init_f <- function () list(b = max(.01,rnorm(1, 3, 1)), shape =max(.01,rnorm(1, 3, 1))  )
+m1 <- brm(data = balanced_RTs, formula = recentred_form, 
+          family = weibull(link = "identity"), prior = c(set_prior("gamma(.1,.1)", class = "b"), set_prior("gamma(1,1)", class = "shape")), #inits = my_inits,
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+#initialising without with non-centred parameterisation and positive prior and initial values..
+
+#not tried
+my_form5 <- bf(RT  ~ failure * cogload + (1 + failure | ppid), shape ~ (1 + failure | ppid), center = FALSE)
+
+summary(m1)
+
+```
+
+```{r plotting priors, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+
+my_form <- bf(RT ~ 1 + ttlc_calc)
+priors <- get_prior(my_form, balanced_RTs, family = weibull(link="identity"), prior = myprior)
+print(priors)
+
+myprior = set_prior("normal(0,2)", class = "b", coef = "ttlc_calc")
+print(myprior)
+int_prior <- rstudent_t(10000, 3,3,10)
+shape_prior <- rgamma(10000, .01, .01)
+qplot(shape_prior)
+
+prior_summary(m1)
+recentred_form <- bf(RT ~ 1 + ttlc_calc, center = FALSE)
+make_stancode(my_form, balanced_RTs, family = weibull(link="identity"))
+make_stancode(recentred_form, balanced_RTs, family = weibull(link="identity")) #why does this not have an intercept?
+get_prior(recentred_form, balanced_RTs, family = weibull(link="identity"))
+make_stancode(my_form, balanced_RTs, family = gaussian(link="identity"))
+make_stancode(my_form, balanced_RTs, family = gaussian(link="log"))
+
+#is the bug in using mu for scale, instead of using a separate parameter?
+
+#mu is used for scale. mu = mu / tgamma(1+1/ shape)
+#reciprocal gamma function gives negative numbers. This will be why the scale cannot initialise. But why does it have more trouble with more parameters? Because half the time it throws negative numbers? 
+#what is the default prior for ttlc_calc? Why doesn't it have one?
+
+scale = mu / gamma(1 + 1 /shape_prior)
+
+hist(scale)
+
+
+
+
+```
+
+
+```{r plotting priors, echo=FALSE, message=FALSE, warning=FALSE}
+
+n = 10000
+int_prior <- rstudent_t(n, 3,3,10)
+shape_prior <- rgamma(n, .5, .5)
+beta_prior <- rnorm(n, 0, 2)
+
+mu = int_prior * beta_prior
+#
+
+hist(mu)
+#scale will give negative 
+scale = mu / gamma(1 + 1 /shape_prior)
+
+hist(log(scale))
+
+
+init_f <- function () list(Intercept = rnorm(1, 15, 2.), shape = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
+
+```
+
+```{r picking initial values, echo=FALSE, message=FALSE, warning=FALSE}
+
+#ok, so the error is in passing negative values for the shape.
+#could constrain all parameters to be positive through the priors...?
+#But this doesn't particularly solve the problem because the coefficient could possibly be negative.
+
+n = 10000
+#int_prior <- rstudent_t(n, 3,3,10)
+int_prior <- rgamma(n, .1,.1)
+shape_prior <- rgamma(n, .5, .5)
+#beta_prior <- rnorm(n, 0, 2)
+beta_prior <- rgamma(n, .1, .1)
+
+mu = int_prior * beta_prior
+#
+
+hist(mu)
+#scale will give negative 
+scale = mu / gamma(1 + 1 /shape_prior)
+
+hist(scale)
+
+my_inits = list(Intercept = 1, ttlc_calc = 1, shape = 1)
+init_f <- function () list(Intercept = rnorm(1, 15, 2.), ttlc_calc = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
+
+```
+
+```{r using rstan, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(rstan)
+mydata <- brms::make_standata(my_form, data = balanced_RTs)
+model_string <- "
+functions {
+}
+data {
+  int<lower=1> N;  // number of observations
+  vector[N] Y;  // response variable
+  int<lower=1> K;  // number of population-level effects
+  matrix[N, K] X;  // population-level design matrix
+  int prior_only;  // should the likelihood be ignored?
+}
+transformed data {
+  int Kc = K - 1;
+  matrix[N, Kc] Xc;  // centered version of X
+  vector[Kc] means_X;  // column means of X before centering
+  for (i in 2:K) {
+    means_X[i - 1] = mean(X[, i]);
+    Xc[, i - 1] = X[, i] - means_X[i - 1];
+  }
+}
+parameters {
+  vector[Kc] b;  // population-level effects
+  real temp_Intercept;  // temporary intercept
+  real<lower=0> shape;  // shape parameter
+}
+transformed parameters {
+}
+model {
+  vector[N] mu = temp_Intercept + Xc * b;
+  vector[N] scale;
+  for (n in 1:N) {
+    scale[n] = exp(mu[n]) / tgamma(1 + 1 / shape);
+  }
+  // priors including all constants
+  target += student_t_lpdf(temp_Intercept | 3, 3, 10);
+  target += gamma_lpdf(shape | 0.01, 0.01);
+  // likelihood including all constants
+  if (!prior_only) {
+    target += weibull_lpdf(Y | shape, scale);
+  }
+}
+generated quantities {
+  // actual population-level intercept
+  real b_Intercept = temp_Intercept - dot_product(means_X, b);
+}"
+
+original_model_string <- "
+functions {
+}
+data {
+  int<lower=1> N;  // number of observations
+  vector[N] Y;  // response variable
+  int<lower=1> K;  // number of population-level effects
+  matrix[N, K] X;  // population-level design matrix
+  int prior_only;  // should the likelihood be ignored?
+}
+transformed data {
+  int Kc = K - 1;
+  matrix[N, Kc] Xc;  // centered version of X
+  vector[Kc] means_X;  // column means of X before centering
+  for (i in 2:K) {
+    means_X[i - 1] = mean(X[, i]);
+    Xc[, i - 1] = X[, i] - means_X[i - 1];
+  }
+}
+parameters {
+  vector[Kc] b;  // population-level effects
+  real temp_Intercept;  // temporary intercept
+  real<lower=0> shape;  // shape parameter
+}
+transformed parameters {
+}
+model {
+  vector[N] mu = temp_Intercept + Xc * b;
+  for (n in 1:N) {
+    mu[n] = (mu[n]) / tgamma(1 + 1 / shape);
+  }
+  // priors including all constants
+  target += student_t_lpdf(temp_Intercept | 3, 3, 10);
+  target += gamma_lpdf(shape | 0.01, 0.01);
+  // likelihood including all constants
+  if (!prior_only) {
+    target += weibull_lpdf(Y | shape, mu);
+  }
+}
+generated quantities {
+  // actual population-level intercept
+  real b_Intercept = temp_Intercept - dot_product(means_X, b);
+}"
+
+rstanfit = stan(model_code = model_string, data = mydata, chains = 1)
+rstanfit2 = stan(model_code = original_model_string, data = mydata, chains = 1)
+
+m2 <- m1
+m2$fit <- rstanfit
+summary(m2)
+summary(m1)
+fixef(m2)
+
+names(extract(rstanfit))
+summary(rstanfit)
+get_inits(rstanfit)
+
+```
