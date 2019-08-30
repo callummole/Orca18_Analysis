@@ -426,12 +426,15 @@ p_analytic +
 
     
 ```
-The densities now account for some of the dual bumps, which suggest that this is due to individual variation rather than condition variation (i.e. due to cogload, which is not current modelled). Also the scatter plots between intercept and slope suggest that they correlate.
+
+```{r analytic distribution from individual regressions, echo=FALSE, message=FALSE, warning=FALSE}
 
 
-<!-- 
 
-basic regression, with formulas. See how your link function changes things.
+ggplot(filter(data_RTs, failure == 3), aes(x = RT)) +
+         geom_histogram() +
+         facet_wrap(~ppid) +
+  xlim(0,10)
 
 
--->
+```

@@ -640,4 +640,3 @@ issue of capped steering wheel angles at large angles produces inability to corr
 Gaze with and without cognitive load.
 Gaze with and without automation. 
 -->
-

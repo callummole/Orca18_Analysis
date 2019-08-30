@@ -1,0 +1,177 @@
+---
+title: 'Silent Failures in Automation RERUN. 20 participants. Pre-reg: https://osf.io/mydfw'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+I report on 20 participants who participated in our Silent Failures paradigm. Half the experiment was factorial: two cognitive loads (NoLoad, Load) and four factored failure severities (_Steering Angle Bias_; SAB). In the other half of the experiment the failure severities and onset times were quasi-random so that there was a spread of different types. The pre-registration can be found at https://osf.io/mydfw. The primary hypothesis is the effect of cognitive load on reaction times. 
+
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+library(magrittr) #for extra pipe functions
+library(cowplot)
+library("wesanderson")
+library(brms)
+library(tidybayes)
+
+#theme for plots on TRANSITION grant.
+theme_transition_report <- theme_classic() +
+  theme(strip.background = element_rect(fill=NA,color=NA), 
+        strip.text = element_text(face="bold",colour="black",size="12"), 
+        axis.title = element_text(face="bold",colour="black",size="12"),
+        axis.text.x = element_text(vjust=-.5),
+        axis.text.y = element_text(vjust=.5),
+        axis.text = element_text(face="plain",colour="black",size="10"),
+        legend.text = element_text(face="plain",colour="black",size="10"),
+        legend.title = element_text(face="bold",colour="black",size="12"),
+        legend.key = element_blank()
+        #panel.grid.major.y = element_line(color="grey85",size=.2, linetype = 2)
+        )
+
+```
+
+
+```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+
+#set working directory to folder that hosts the binary files.
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+#load steergaze data
+
+
+#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
+#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
+steergazedata <- readRDS("../Data/Orca19_collated_steering.rds")  
+
+
+steergazedata <- steergazedata %>% 
+rename(swv = swa) %>% 
+mutate(swa = swv * 90)
+
+#mirror data
+steergazedata <- steergazedata %>% 
+mutate(world_x_mirrored = world_x * bend,
+       swa_mirrored = swa * bend,
+       swv_mirrored = swv * bend,
+       sb_mirrored = steeringbias * bend)
+
+  
+#add ttlc
+ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+  b = b / 180 * pi
+  
+  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+}
+
+steergazedata <- steergazedata %>% 
+mutate(sb_change = c(NA, diff(sb_mirrored)),
+       ttlc_calc = ttlc_from_offset(sab)
+       )
+
+
+  #add RT and disengage flag.
+disengage_RT <- function(onsettime, timestamp_trial, autoflag){
+
+  #pick first frame where autoflag == false, then take the timestamp and minus the onset_time
+  auto_false <- which(autoflag == "FALSE")
+  disengage_index <- first(auto_false)
+  disengage_trialtime <- timestamp_trial[disengage_index]
+  onset_time <- first(onsettime)
+  RT <- disengage_trialtime - onset_time #can be negative
+  return(RT)
+  
+}
+
+#calculate RT
+steergazedata <- steergazedata  %>% 
+group_by(ppid, sab, cogload, trialn) %>% 
+mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
+      disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
+      )
+
+#create unique trial id
+steergazedata <- steergazedata %>% 
+  mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
+
+steergazedata$cogload <- as.factor(steergazedata$cogload)
+
+
+#rename cogload factors so that it makes sense
+steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
+
+
+```
+
+```{r plotting swa, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 9. swa for cogload within different failure types. The dashed line is the point of takeover"}
+
+
+#pick up .5 s before trial takeover so you can see how quickly swa moves after takeover.
+
+delay = 1
+steergaze_manual_delay <- steergazedata %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + onsettime - delay))
+
+### Reset trial so they all start at around [0,0] 
+steergaze_manual_delay <- steergaze_manual_delay %>% 
+  ungroup() %>% 
+  group_by(trialid) %>%
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+#plot steering bias
+p_swa <- ggplot(data = filter(steergaze_manual_delay, f < 360), aes(x = timestamp_zero - delay, y= swa_mirrored)) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  theme_transition_report +
+  ylim(c(-45,90)) +
+  xlab("Time (s)") + ylab("Steering Wheel Angle (degrees)") +
+  geom_vline(xintercept = 0, col = "black", linetype = "dashed")
+  
+show(p_swa)
+
+#plot steering bias
+p_sb <- ggplot(data = filter(steergaze_manual_delay, f < 360), aes(x = timestamp_zero - delay, y= sb_mirrored)) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  theme_transition_report +
+  ylim(c(-2,2)) +
+  xlab("Time (s)") + ylab("Steering Bias") +
+  geom_vline(xintercept = 0, col = "black", linetype = "dashed")
+  
+show(p_sb)
+
+
+```
+
+```{r fitting harmonic oscillator, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+data_fromtakeover <- steergazedata %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + onsettime)) %>% 
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+write.csv(data_fromtakeover, "Orca19_datafromtakeover.csv")
+
+
+
+```
+
+
+
+
+

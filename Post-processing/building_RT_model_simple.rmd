@@ -200,6 +200,19 @@ hist(scale)
 my_inits = list(Intercept = 1, ttlc_calc = 1, shape = 1)
 init_f <- function () list(Intercept = rnorm(1, 15, 2.), ttlc_calc = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
 
+y_form <- bf(RT ~ ttlc_calc)
+my_inits = list(list(b = c(1,1), shape = 1))
+#init_f <- function () list(b = max(.01,rnorm(1, 3, 1)), shape =max(.01,rnorm(1, 3, 1))  )
+m1 <- brm(data = balanced_RTs, formula = RT ~ ttlc_calc, 
+          family = weibull(link = "identity"), 
+          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+#initialising without with non-centred parameterisation and positive prior and initial values..
+
+#not tried
+my_form5 <- bf(RT  ~ failure * cogload + (1 + failure | ppid), shape ~ (1 + failure | ppid), center = FALSE)
+
+
 ```
 
 ```{r using rstan, echo=FALSE, message=FALSE, warning=FALSE}

@@ -267,7 +267,7 @@ if (!file.exists("m3_varying_shapewithttlc.rda")) {
 } else {load("m3_varying_shapewithttlc.rda")}
 
 save(m3.1, file ="m3_varying_shapewithttlc_balancedonly.rda")
-
+load("m3_varying_shapewithttlc_balancedonly.rda")
 
 
 my_form_factor <- bf(RT ~ failure * cogload + (1 + failure + cogload | ppid), shape ~ failure + (1 | ppid), center = FALSE)
@@ -326,12 +326,13 @@ pp_check(m3.11)
 
 
 m3_predict <- balanced_RTs  %>%
-  add_predicted_draws(m3.11)
+  add_predicted_draws(m3.1)
 
 m3_nopp <- balance  %>%
   add_predicted_draws(m3.11) 
 
 pp_check(m3.1.2)
+pp_check(m3.1) #doesn't quite capture the peaks
 
 ###plot predicted values
 ### plot the distributions of the balanced RTs
@@ -339,8 +340,9 @@ pp_check(m3.1.2)
 #ribbon plot
 ggplot(balanced_RTs, aes(x = ttlc_calc, y= RT)) +
   stat_lineribbon(data = m3_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "magenta", fill = "red") +
-  xlim(0,15) + ylim(0,10) +
-  geom_point(alpha = .25, col = "black")
+  xlim(0,10) + ylim(0,10) +
+  geom_point(alpha = .25, col = "black") +
+  facet_wrap(~ppid)
 
 
 m3_balanced_predictions <- filter(m3_predict, ttlc_calc %in% ttlc_calc_levels)
@@ -379,11 +381,11 @@ m3_fitted <- balanced_RTs %>%
   add_fitted_draws(m3.1.2)
 
 means_for_resids <- balanced_RTs %>% 
-  group_by(ppid, cogload, failure) %>% 
+  group_by(ppid, cogload, ttlc_calc) %>% 
   summarise(mnRT = mean(RT))
 
 m3_fitted <- means_for_resids  %>% #added to dataframe of means.
-  add_fitted_draws(m3.1.2)
+  add_fitted_draws(m3.1)
   
 fitted_draws <- sample_draws(m3_fitted, 50)
 
@@ -408,7 +410,7 @@ marginal_effects(m3_varying_shape)
 pp_check(m3_varying_shape, type = "error_hist")
 
 
-condition_list <- data_RTs %>% 
+condition_list <- balanced_RTs %>% 
   select(ttlc_calc, cogload) %>% 
   unique(.)
 rt_draws <- add_fitted_draws(newdata = condition_list, model = m3.1, re_formula = NA)
@@ -423,6 +425,11 @@ cogload_contrast <- cogload_contrast %>%
 
 abovezero <- mean(cogload_contrast$mn_diff > 0)
 
-ggplot(cogload_contrast, aes(x = mn_diff)) + geom_density()
+ggplot(cogload_contrast, aes(x = mn_diff)) + geom_density() + xlim(0,.5)
+
+
+ggsave("individual_prediction_intervals.png", plot = last_plot(), type = "cairo")
+ggsave("cogloadcontrast_m3-1.png", plot = last_plot(), type = "cairo")
+ggsave("balanced_predicted_distributions_m3-1.png", plot = last_plot(), type = "cairo")
 
 ```
