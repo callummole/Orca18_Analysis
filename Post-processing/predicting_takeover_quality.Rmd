@@ -155,7 +155,7 @@ show(p_sb)
 
 ```
 
-```{r fitting harmonic oscillator, echo=FALSE, message=FALSE, warning=FALSE}
+```{r data from takeover, echo=FALSE, message=FALSE, warning=FALSE}
 
 
 data_fromtakeover <- steergazedata %>% 
@@ -168,6 +168,40 @@ data_fromtakeover <- steergazedata %>%
 write.csv(data_fromtakeover, "Orca19_datafromtakeover.csv")
 
 
+
+```
+
+
+```{r fitting harmonic oscillator, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+data_sb <- data_fromtakeover %>% 
+  group_by(trialid) %>% 
+  summarise(SDLP = sd(steeringbias),
+            sw_var = sd(swa),
+            sab = first(sab),
+            ttlc_calc = first(ttlc_calc),
+            cogload = first(cogload),
+            sb_mn = mean(sb_mirrored),
+            ppid = first(ppid),
+            design = first(design))
+
+colnames(data_fromtakeover)
+
+min(data_sb$SDLP)
+
+ggplot(data_sb, aes(x = SDLP, group = cogload, fill = cogload)) + geom_histogram(binwidth = .01, alpha = .5, position = "identity") + xlim(0,1)
+
+ggplot(filter(data_sb, design == "balanced"), aes(x = SDLP, group = cogload, fill = cogload)) + geom_histogram(binwidth = .1, alpha = .5, position = "identity") + xlim(0,1) +
+  facet_wrap(~ppid)
+
+ggplot(data_sb, aes(x = sw_var, group = cogload, fill = cogload)) + geom_histogram(binwidth = .5, alpha = .5, position = "identity") 
+ggplot(data_sb, aes(x = sw_var, group = cogload, col = cogload)) + geom_density()
+ggplot(data_sb, aes(x = ttlc_calc, y = sw_var)) + geom_point(alpha = .1)
+
+#sdlp and sw_var both seem to show reduced magnitude slightly with load.
+
+#What are we interested in here? Are we interested in the trade-off? I haven't even begun on the cognitive task performance...
 
 ```
 

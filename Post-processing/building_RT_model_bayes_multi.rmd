@@ -23,43 +23,122 @@ First we load the data.
 library("tidyverse")
 library("brms")
 library("tidybayes")
+library("wesanderson")
+library("cowplot")
 
 ```
 
+```{r, load data}
 
-```{r Load data, echo=FALSE, message=FALSE, warning=FALSE}
+REFIT = TRUE #whether to refit models.
 
-#set working directory to folder that hosts the binary files.
+
 setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
 
-balanced_RTs <- read_csv("balanced_RTs.csv")  
+#load steergaze data
 
-#add failure factor.
-balanced_RTs$failure <- factor(balanced_RTs$simTTLC, labels = c("1","2","3","4"))
 
-#get rid of premature takeovers. Not interested in those.
-balanced_RTs <- balanced_RTs %>% 
-  filter(premature == 0)
+#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
+#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
+steergazedata <- readRDS("../Data/Orca19_collated_steering.rds")  
 
-knitr::kable(head(balanced_RTs))
 
+steergazedata <- steergazedata %>% 
+  rename(swv = swa) %>% 
+  mutate(swa = swv * 90)
+
+#mirror data
+steergazedata <- steergazedata %>% 
+  mutate(world_x_mirrored = if_else(bend == -1, world_x * -1, world_x),
+         swa_mirrored = if_else(bend == -1, swa * -1, swa),
+         swv_mirrored = if_else(bend == -1, swv * -1, swv),
+         sb_mirrored = if_else(bend == -1, steeringbias * -1, steeringbias))
+
+
+
+ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+  b = b / 180 * pi
+  
+  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+}
+
+steergazedata <- steergazedata %>% 
+  mutate(ttlc_calc = ttlc_from_offset(sab))
+
+#add RT and disengage flag.
+disengage_RT <- function(onsettime, timestamp_trial, autoflag){
+  
+  #pick first frame where autoflag == false, then take the timestamp and minus the onset_time
+  auto_false <- which(autoflag == "FALSE")
+  disengage_index <- first(auto_false)
+  disengage_trialtime <- timestamp_trial[disengage_index]
+  onset_time <- first(onsettime)
+  RT <- disengage_trialtime - onset_time #can be negative
+  return(RT)
+  
+}
+
+#calculate RT
+steergazedata <- steergazedata  %>% 
+  group_by(ppid, sab, cogload, trialn) %>% 
+  mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
+         disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
+  )
+
+#create unique trial id
+steergazedata <- steergazedata %>% 
+  mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
+
+steergazedata$cogload <- as.factor(steergazedata$cogload)
+
+
+#rename cogload factors so that it ameks sense
+steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
+
+
+
+
+
+#we now have two data frames. "balanced_steerdata" and "random_steerdata"
+data_RTs <- steergazedata  %>% 
+  ungroup() %>% 
+  group_by(ppid, cogload, trialn) %>% 
+  summarize(RT = first(RT),
+            disengaged = first(disengaged), #whether or not they actually took over.
+            premature = ifelse(RT <= 0, 1, 0),
+            sab = first(sab),
+            onsettime = first(onsettime),
+            design = first(design),
+            simTTLC = first(simulated_ttlc),
+            ttlc_calc = first(ttlc_calc))
 
 ```
+
+
 Let's plot a scatter plot to get an idea of the behaviour. We draw trend lines through the medians of each factor.
 
 ```{r scatter plots, echo=FALSE, message=FALSE, warning=FALSE}
 
 #median data frame.
-med_RTs <- balanced_RTs %>% 
-  group_by(failure, cogload) %>% 
+med_RTs <- data_RTs %>% 
+  filter(design == "balanced", disengaged == 1) %>%
+  group_by(simTTLC, cogload) %>% 
   summarise(RT = median(RT))
 
 dodge <- position_dodge(width=0.1)  
-ggplot(balanced_RTs, aes(x = failure, y= RT, colour = cogload, group = cogload)) +
+
+p <- ggplot(filter(data_RTs, design == "balanced"), aes(x = simTTLC, y= RT, colour = cogload, group = cogload)) +
   geom_point(alpha = .1, position = dodge) +
   geom_line(data = med_RTs, size = 1, position = dodge) +
   geom_point(data = med_RTs, size =2, position = dodge) +
   scale_colour_brewer(palette = "Set1")
+
+#ggsave('meds.png', p,  device="png", width=18, height= 8.5, units = "cm", dpi=300, type="cairo")
+
+#steergazedata %>% 
+#  ungroup() %>% 
+#  filter(design == "random") %>% 
+#  summarise(min(autofile_i))
   
 ```
 
@@ -67,369 +146,688 @@ ggplot(balanced_RTs, aes(x = failure, y= RT, colour = cogload, group = cogload))
 
 ```{r load and plot random_RTs, echo=FALSE, message=FALSE, warning=FALSE}
 
-random_RTs <- read_csv("random_RTs.csv")  
-
-#get rid of premature takeovers. Not interested in those.
-random_RTs <- random_RTs %>% 
-  filter(premature == 0)
-
-data_RTs <- full_join(balanced_RTs, random_RTs)
 
 
-```
-
-
-```{r calc offset, echo=FALSE, message=FALSE, warning=FALSE}
-
-ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
-  b = b / 180 * pi
-  
-  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
-}
-data_RTs <- data_RTs %>% 
-  mutate(ttlc_calc = ttlc_from_offset(sab))
-
-
-balanced_RTs <- balanced_RTs %>% 
-  mutate(ttlc_calc = ttlc_from_offset(sab))
-
-
-```
-
-
-
-```{r m3 random intercept and slope, echo=FALSE, message=FALSE, warning=FALSE}
-
-init_f <- function () list(Intercept = rnorm(1, 15, 2.), shape = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
-
-form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc * cogload | ppid), center = FALSE)
-
-#this really struggles to initialise sometimes. Set to one chain so that it doesn't need to initialise 4 chains.
-if (!file.exists("m3_multi_weib.rda")) {
-  m3_multi_weib <- brm(data = data_RTs, formula = form, 
-          family = weibull(link = "identity"), inits = init_f,
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-    save(m3_multi_weib, file ="m3_multi_weib.rda")
-} else {load("m3_multi_weib.rda")}
-
-if (!file.exists("m3_multi_gamma.rda")) {
-  m3_multi_gamma <- brm(data = data_RTs, formula = form, 
-          family = Gamma(link = "identity"), inits = init_f,
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-    save(m3_multi_gamma, file ="m3_multi_gamma.rda")
-} else {load("m3_multi_gamma.rda")}
-  
-  
-
-loo_model_weights(m3_multi_weib, m3_multi_gamma)
-
-
-#plot analytic distributions
-#summary(m3_ttlc_calc_multi)
-pp_check(m3_ttlc_calc_multi) # still slightly off, not getting that second trough.
-pp_check(m3_multi_gamma) # still slightly off, not getting that second trough.
-
-#get_prior(formula = form, data = data_RTs)
-
-summary(m3_multi_weib)
-
-m3_weib_predict <- data_RTs  %>%
-  add_predicted_draws(m3_multi_weib) 
-  #ggplot(aes(x = RT, y = .prediction)) +
-  #geom_point(alpha = .5)
-
-###plot predicted values
-### plot the distributions of the balanced RTs
-#retrieves ttlc_calc balanced levels.
-sab_levels <- data_RTs %>% 
+ticks <- data_RTs %>% 
   filter(design == "balanced") %>% 
-  select(sab) %>% 
+  ungroup() %>% 
+  mutate(simTTLC = round(simTTLC, digits = 1)) %>% 
+  select(simTTLC) %>% 
   unique(.)
+  
+  
 
-ttlc_calc_levels <- apply(sab_levels, 1, ttlc_from_offset) #quite a bit different from the previous simTTLC.
-
-m3_balanced_predictions <- filter(m3_weib_predict, ttlc_calc %in% ttlc_calc_levels)
-
-ggplot(data = filter(data_RTs, design == "balanced")) +
-  geom_density(aes(x = RT), col = "red", alpha = .5) +
-  geom_density(data = m3_balanced_predictions, aes(x = .prediction), alpha = .8, col = "blue") +
-  facet_wrap(~ttlc_calc, scales = "free_y") +
-  ylab("density")
-
-
-m3_weib_plot_data <- sample_draws(m3_weib_predict, 20)
-
-dodge <- position_dodge(width=0.1)  
-ggplot(data_RTs, aes(x = ttlc_calc, y= RT)) +
-  geom_point(data = m3_weib_plot_data, aes(y = .prediction), alpha = .01, col = "blue") +
-  geom_point(alpha = .5, col = "red") 
-
-m3_weib_predict <- data_RTs  %>%
-  add_predicted_draws(m3_multi_weib)
-
-pp_predict <- filter(m3_weib_predict, ppid == 5)
-
-ggplot(pp_predict, aes(x = RT, y= .prediction, colour = cogload, group = cogload)) +
+p <- ggplot(filter(data_RTs, premature == 0, disengaged == 1), aes(x = simTTLC, y= RT, colour = cogload, group = cogload)) +
   geom_point(alpha = .1, position = dodge) +
-  scale_colour_brewer(palette = "Set1")
+  geom_line(data = med_RTs, size = 1, position = dodge) +
+  geom_point(data = med_RTs, size =2, position = dodge) +
+  scale_colour_brewer(palette = "Set1") +
+  theme_classic() +
+  scale_x_continuous(breaks = ticks$simTTLC, labels = ticks$simTTLC)
 
+print(p)
 
-### plot fitted values
-m3_weib_fitted <- data_RTs  %>%
-  add_fitted_draws(m3_multi_weib)
+ggsave('meds_full.png', p,  device="png", width=18, height= 8.5, units = "cm", dpi=300, type="cairo")
 
-means_for_resids <- data_RTs %>% 
-  group_by(ppid, cogload, ttlc_calc) %>% 
-  summarise(mnRT = mean(RT))
+max(data_RTs$RT)
 
+data_RTs <- mutate(data_RTs, time_remaining = 15 - onsettime,
+                   early = time_remaining - RT)
 
+head(filter(data_RTs, early < .1))
 
-m3_weib_fitted <- means_for_resids  %>% #added to dataframe of means.
-  add_fitted_draws(m3_multi_weib)
-  
-m3_fitted_draws <- sample_draws(m3_weib_fitted, 50)
-
-ggplot(m3_fitted_draws, aes(x = mnRT, y= .value, colour = cogload, group = cogload)) +
-  geom_point(alpha = .05, position = dodge) +
-  geom_abline(slope = 1) +
-  facet_wrap(~ppid) +
-  scale_colour_brewer(palette = "Set1")
-
-#residuals
-ggplot(m3_fitted_draws, aes(x = mnRT, y= mnRT - .value, colour = cogload, group = cogload)) +
-  geom_point(alpha = .05, position = dodge) +
-  geom_abline(slope = 0, intercept = 0) +
-  facet_wrap(~ppid) +
-  scale_colour_brewer(palette = "Set1")
-
-ggplot(m3_fitted_draws) +
-  geom_density(aes(x = mnRT), col = "blue") +
-  geom_density(aes(x = .value), col = "red")
-
-marginal_effects(m3_multi_weib)
-  
-####contrast
-#data_A1 <- dataset[dataset$factorA == levels(dataset$factorA)[1], ]
-#PPD_A1 <- posterior_predict(fit, newdata = data_A1)
-#data_A2 <- data_A1
-#data_A2$factorA[1:nrow(data_A2)]  <- levels(dataset$factorA)[2]
-#PPD_A2 <- posterior_predict(fit, newdata = data_A2)
-#PPD_diff <- PPD_A2 - PPD_A1
-
-condition_list <- data_RTs %>% 
-  select(ttlc_calc, cogload) %>% 
-  unique(.)
-rt_draws <- add_fitted_draws(newdata = condition_list, model = m3_multi_weib, re_formula = NA)
-  
-cogload_contrast <- rt_draws %>% 
-  group_by(.draw, ttlc_calc) %>% 
-  summarise(contrast = .value[cogload == "load"] - .value[cogload == "noload"])
-
-cogload_contrast <- cogload_contrast %>% 
-  group_by(.draw) %>% 
-  summarise(mn_diff = mean(contrast))
-
-ggplot(cogload_contrast, aes(x = mn_diff)) + geom_density()
-
-
-#pp_check(m3_ttlc_calc_multi, type = "error_hist")
+ggplot(data_RTs, aes(x = time_remaining, y = time_remaining - RT)) + geom_point()
 
 ```
 
-```{r m3 balanced data, echo=FALSE, message=FALSE, warning=FALSE}
 
+```{r, plot density}
 
-init_f <- function () list(Intercept = rnorm(1, 15, 2.), shape = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
+p_dens <- ggplot(filter(data_RTs, design == "balanced", premature == 0, disengaged == 1), aes(x = RT, group = factor(sab), colour = factor(sab))) +
+  geom_density(alpha = .8) +
+  xlim(c(0,10)) +
+  scale_colour_manual(values = rev(wes_palette("BottleRocket2",n=4)), name = "Failure TTLC (s)", labels = c("2.23", "4.68", "7.1", "9.5")) +
+  xlab(expression("RT"["takeover"]*" (s)")) + theme_classic()
 
+print(p_dens)
 
+ggsave('dens.png', p_dens,  device="png", width=18, height= 8.5, units = "cm", dpi=300, type="cairo")
 
-#this really struggles to initialise sometimes. Set to one chain so that it doesn't need to initialise 4 chains.
-
-if (!file.exists("m3_varying_shape.rda")) {
-  my_form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~ (1 | ppid), center = FALSE)
-  m3_varying_shape <- brm(data = data_RTs, formula = my_form, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-    save(m3_varying_shape, file ="m3_varying_shape.rda")
-} else {load("m3_varying_shape.rda")}
-
-
-if (!file.exists("m3_varying_shapewithttlc.rda")) {
-  my_form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~ (1 + ttlc_calc | ppid), center = FALSE)
-  m3.1 <- brm(data = balanced_RTs, formula = my_form, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-  
-  m3.11 <- brm(data = filter(balanced_RTs, ppid != 11), formula = my_form, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-    save(m3.1, file ="m3_varying_shapewithttlc.rda")
-} else {load("m3_varying_shapewithttlc.rda")}
-
-save(m3.1, file ="m3_varying_shapewithttlc_balancedonly.rda")
-load("m3_varying_shapewithttlc_balancedonly.rda")
-
-
-my_form_factor <- bf(RT ~ failure * cogload + (1 + failure + cogload | ppid), shape ~ failure + (1 | ppid), center = FALSE)
-m3.1.factor <- brm(data = balanced_RTs, formula = my_form_factor, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-save(m3.1.factor, file ="m3_varying_shape_factor.rda")
-
-
-if (!file.exists("m3_varying_shapewithcogload.rda")) {
-  my_form <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~ ttlc_calc + cogload + (1 | ppid), center = FALSE)
-  m3.2 <- brm(data = data_RTs, formula = my_form, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-    save(m3.2, file ="m3_varying_shapewithcogload.rda")
-} else {load("m3_varying_shapewithcogload.rda")}
-
-#cannot initialise a model with mixed effects for the shape parameters.
-my_form3 <- bf(RT ~ ttlc_calc * cogload + (1 + ttlc_calc + cogload | ppid), shape ~  (1 + cogload | ppid), center = FALSE)
-  m3.3 <- brm(data = data_RTs, formula = my_form3, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-
-#cannot initialise truncated version  
-my_form4 <- bf(RT  ~ failure * cogload, shape ~ (1 + failure | ppid), center = FALSE)
-  m3.1.2 <- brm(data = balanced_RTs, formula = my_form4, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-  
-my_form5 <- bf(RT  ~ failure * cogload + (1 + failure | ppid), shape ~ (1 + failure | ppid), center = FALSE)
-  m3.1.3 <- brm(data = balanced_RTs, formula = my_form5, 
-          family = weibull(link = "identity"), prior = set_prior("gamma(.1,.1)", class = "Intercept", dpar = "shape"),
-          iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-  
-get_prior(my_form, balanced_RTs, weibull(link="identity"))
-#plot analytic distributions
-#summary(m3_ttlc_calc_multi)
-loo_model_weights(m3_varying_shape, m3_multi_weib) # varying shape massively better.
-loo_model_weights(m3_varying_shape, m3.1) # varying shape massively better.
-loo_model_weights(m3_varying_shape, m3.1, m3.2, m3.3)
-loo(m3_varying_shape, m3.1, m3.2, m3.3)
-
-loo(m3.1, m3.1.2)
-loo_model_weights(m3.1, m3.1.2)
-
-summary(m3.11)
-prior_summary(m3.1)
-
-m3_predict <- balanced_RTs  %>%
-  add_predicted_draws(m3.1) 
-  #ggplot(aes(x = RT, y = .prediction)) +
-  #geom_point(alpha = .5)
-
-pp_check(m3.11)
-
-
-
-m3_predict <- balanced_RTs  %>%
-  add_predicted_draws(m3.1)
-
-m3_nopp <- balance  %>%
-  add_predicted_draws(m3.11) 
-
-pp_check(m3.1.2)
-pp_check(m3.1) #doesn't quite capture the peaks
-
-###plot predicted values
-### plot the distributions of the balanced RTs
-#retrieves ttlc_calc balanced levels.
-#ribbon plot
-ggplot(balanced_RTs, aes(x = ttlc_calc, y= RT)) +
-  stat_lineribbon(data = m3_predict, aes(y = .prediction), .width = c(.99, .95, .50), alpha = .5, col = "magenta", fill = "red") +
-  xlim(0,10) + ylim(0,10) +
-  geom_point(alpha = .25, col = "black") +
-  facet_wrap(~ppid)
-
-
-m3_balanced_predictions <- filter(m3_predict, ttlc_calc %in% ttlc_calc_levels)
-
-ggplot(data = balanced_RTs) +
-  geom_density(aes(x = RT), col = "red", alpha = .5) +
-  geom_density(data = m3_balanced_predictions, aes(x = .prediction), alpha = .8, col = "blue") +
-  facet_wrap(~ttlc_calc, scales = "free") +
-  ylab("density")
-
-ggplot(data = balanced_RTs) +
-  geom_density(aes(x = RT), col = "red", alpha = .5) +
-  geom_density(data = m3_predict, aes(x = .prediction), alpha = .8, col = "blue") +
-  facet_wrap(~ttlc_calc, scales = "free") +
-  ylab("density")
-
-predict_draws <- sample_draws(m3_predict, 20)
-
-#avoid repeating the original data for every draw.
-ggplot(predict_draws) +
-  geom_density(aes(x = .prediction, group = .draw), col = alpha("blue",.1)) +
-  geom_density(data = balanced_RTs, aes(x = RT), col = "red")
-
-ggplot(predict_draws) +
-  geom_density(aes(x = .prediction, group = .draw), col = alpha("blue",.1)) +
-  geom_density(data = balanced_RTs, aes(x = RT), col = "red") +
-  facet_wrap(~ppid)
-
-ggplot(filter(predict_draws, design == "balanced")) +
-  geom_density(dat = balanced_RTs, aes(x = RT), col = "red") +
-  geom_density(aes(x = .prediction, group = .draw), col = alpha("blue",.1)) +
-  facet_grid(cogload~ttlc_calc, scales = "free")
-
-### plot fitted values
-m3_fitted <- balanced_RTs %>%
-  add_fitted_draws(m3.1.2)
-
-means_for_resids <- balanced_RTs %>% 
-  group_by(ppid, cogload, ttlc_calc) %>% 
-  summarise(mnRT = mean(RT))
-
-m3_fitted <- means_for_resids  %>% #added to dataframe of means.
-  add_fitted_draws(m3.1)
-  
-fitted_draws <- sample_draws(m3_fitted, 50)
-
-ggplot(fitted_draws, aes(x = mnRT, y= .value, colour = cogload, group = cogload)) +
-  geom_point(alpha = .05, position = dodge) +
-  geom_abline(slope = 1) +
-  facet_wrap(~ppid) +
-  scale_colour_brewer(palette = "Set1")
-
-#residuals
-ggplot(fitted_draws, aes(x = mnRT, y= mnRT - .value, colour = cogload, group = cogload)) +
-  geom_point(alpha = .05, position = dodge) +
-  geom_abline(slope = 0, intercept = 0) +
-  facet_wrap(~ppid) +
-  scale_colour_brewer(palette = "Set1")
-
-ggplot(fitted_draws) +
-  geom_density(aes(x = mnRT), col = "red") +
-  geom_density(aes(x = .value), col = "blue")
-
-marginal_effects(m3_varying_shape)
-pp_check(m3_varying_shape, type = "error_hist")
-
-
-condition_list <- balanced_RTs %>% 
-  select(ttlc_calc, cogload) %>% 
-  unique(.)
-rt_draws <- add_fitted_draws(newdata = condition_list, model = m3.1, re_formula = NA)
-  
-cogload_contrast <- rt_draws %>% 
-  group_by(.draw, ttlc_calc) %>% 
-  summarise(contrast = .value[cogload == "load"] - .value[cogload == "noload"])
-
-cogload_contrast <- cogload_contrast %>% 
-  group_by(.draw) %>% 
-  summarise(mn_diff = mean(contrast))
-
-abovezero <- mean(cogload_contrast$mn_diff > 0)
-
-ggplot(cogload_contrast, aes(x = mn_diff)) + geom_density() + xlim(0,.5)
-
-
-ggsave("individual_prediction_intervals.png", plot = last_plot(), type = "cairo")
-ggsave("cogloadcontrast_m3-1.png", plot = last_plot(), type = "cairo")
-ggsave("balanced_predicted_distributions_m3-1.png", plot = last_plot(), type = "cairo")
 
 ```
+
+```{r, plot variance}
+
+#variance data frame.
+var_RTs <- data_RTs %>% 
+  filter(disengaged == 1, premature == 0) %>% 
+  group_by(design, ttlc_calc, cogload) %>% 
+  summarise(var = var(RT))
+
+head(var_RTs)
+
+#dodge <- position_dodge(width=0.1)  
+p_var <- ggplot(data = filter(var_RTs, design == "balanced"), aes(x = ttlc_calc, y= var, colour = cogload, group = cogload)) +
+  geom_point(alpha = 1) +
+  geom_line() +
+  geom_point(data = filter(var_RTs, design == "random"), aes(x = ttlc_calc, y= var, colour = cogload, group = cogload), alpha = .3) +
+  scale_colour_brewer(palette = "Set1") +
+  ylim(0,1.5) + theme_classic()
+
+print(p_var)
+ggsave('var.png', p_var,  device="png", width=18, height= 8.5, units = "cm", dpi=300, type="cairo")
+
+```
+```{r, check cogload relationship across ttlc}
+
+meds <- data_RTs %>% 
+  filter(design == "balanced") %>% 
+  group_by(ppid, ttlc_calc, cogload) %>% 
+  summarise(medRT = median(RT))
+
+
+head(meds)
+cogload_diff <- meds %>% 
+  group_by(ppid, ttlc_calc) %>% 
+  summarise(diff = medRT[1] - medRT[2],
+            val = diff/medRT[2],
+            noload = medRT[2]) 
+
+med_trend <- cogload_diff %>% group_by(ttlc_calc) %>% summarise(meddiff = median(diff, na.rm = TRUE))
+
+ggplot(cogload_diff, aes(x = val)) + 
+  geom_histogram(alpha = .5) 
+
+ggplot(cogload_diff, aes(x = noload, y = diff, group = ppid, colour = factor(ppid))) + 
+  geom_point(alpha = .5) +
+  #geom_line(data = med_trend, aes(x = ttlc_calc, y = meddiff))
+  geom_line(alpha = .7)
+
+
+```
+
+
+```{r, check inverse relationship}
+
+data_RTs <- data_RTs %>% mutate(inv_RT = 1/RT, inv_TR = 1/time_remaining, inv_ttlc = 1/ttlc_calc)
+ggplot(filter(data_RTs, premature == 0), aes(x =ttlc_calc, y= RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .8) +
+  facet_wrap(~ppid)
+
+
+
+```
+
+
+
+```{r checking best response distribution, echo=FALSE, message=FALSE, warning=FALSE, eval = FALSE}
+
+#init_f <- function () list(Intercept = rnorm(1, 15, 2.), shape = max(.01,rnorm(1, 3, 1)), scale =max(.01,rnorm(1, 3, 1))  )
+#we have non-linear variance and slightly non-linear RT -> sab mapping, so taking the log-log forces the data into a linear space.
+
+data_RTs <- data_RTs %>% mutate(log_RT = log(RT), log_TR = log(time_remaining), log_ttlc = log(ttlc_calc))
+
+ggplot(data_RTs, aes(x = log_ttlc, y= log_RT, colour = cogload, group = cogload)) +
+  geom_point(alpha = .8, position = dodge) +
+  facet_wrap(~ppid)
+  
+
+ggplot(filter(data_RTs, disengaged == 1), aes(x = log(ttlc_calc), y= var(log_RT))) + geom_point() #also variance is homogenous.
+
+ggplot(data = data_RTs) +
+  geom_histogram(aes(x = RT), fill = "red", alpha = .2) +
+  #geom_density(data = m0.weib_pred, aes(x = log(.prediction)), alpha = .8, col = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free_y") +
+  geom_vline(aes(xintercept = time_remaining)) +
+  ylab("density")
+
+#ggplot(data = data_RTs, aes(x = ttlc_calc, y = sab, color = onsettime, size = sab)) + geom_point()
+
+#hist(log(fail$RT))
+
+
+#form <- bf(RT | trunc(ub = time_remaining) ~ ttlc_calc*cogload + (1 + ttlc_calc*cogload | ppid))
+log_form <- bf(log_RT | trunc(ub = log_TR) ~ log_ttlc+cogload + (1 + log_ttlc+cogload | ppid), sigma ~ (1 | ppid))
+#log_form_onset <- bf(log_RT | trunc(ub = log_TR) ~ log_ttlc*cogload + onsettime + (1 + log_ttlc*cogload | ppid), sigma ~ (1 | ppid))
+
+tofit <- filter(data_RTs, premature == 0 | is.na(premature)) #include the NA responses
+tofit <- filter(tofit, (early > 0 | is.na(early))) #there is one trial where they have taken over after the trialelapsed, and it has been recorded.
+tofit %>% 
+  mutate(diff = log_TR - log_RT) %>% 
+  filter(diff < 0) %>% 
+  head()
+
+#let's use families where the canonical link is the identity function for ease of interpretation. 
+tofit <- tofit %>% mutate(log_ttlc = round(log_ttlc, 2),calc_ttlc = round(calc_ttlc, 2))
+only_responses <- filter(tofit, disengaged == 1)
+m0.gauss_resp <- brm(data = only_responses, formula = log_form,
+                family = gaussian(),
+                iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+m0.gauss <- brm(data = tofit, formula = log_form,
+                family = gaussian(),
+                iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+#CM: when the other predictors are log space it is difficult to do it additve.
+#m0.gauss_onset <- brm(data = tofit, formula = log_form_onset,
+#                family = gaussian(),
+#                iter = 5000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+summary(m0.gauss)
+summary(m0.gauss_resp) #it doesn't matter if you include the RTs as NAs or not.
+#summary(m0.gauss_onset)
+pp_check(m0.gauss)
+pp_check(m0.gauss_resp)
+#pp_check(m0.gauss_onset)
+#loo(m0.gauss, m0.gauss_onset)
+#loo_model_weights(m0.gauss, m0.gauss_onset)
+
+marginal_effects(m0.gauss)
+
+```
+
+```{r, useful functions}
+
+
+
+
+ttlc_calc <- seq(1, to = 15, by = .1)
+ppid <- 1:20
+cogload <- c("noload","load")
+pred_list <- expand_grid(ttlc_calc, ppid, cogload)
+
+
+create_predictions <- function(mod, condition_list){
+  preds <- predict(mod, newdata=condition_list, summary=TRUE, probs = c(.005, 0.025, .25, .75, 0.975, .995), transform = "exp")     
+  preds <- cbind(condition_list,preds) #add the condition values
+  return(preds)
+}
+
+plot_ribbon <- function(dat, preds, fname, x, y){
+
+  p <- ggplot(preds, aes_string(x = x)) +
+    geom_line(aes(y = Q0.5), col = "blue", alpha = .2) +
+    geom_line(aes(y = Q99.5), col = "blue", alpha = .2) +
+    geom_line(aes(y = Q2.5), col = "blue", alpha = .5) +
+    geom_line(aes(y = Q97.5), col = "blue", alpha = .5) +
+    geom_line(aes(y = Q25), col = "blue", alpha = .75) +
+    geom_line(aes(y = Q75), col = "blue", alpha = .75) +
+    geom_line(aes(y = Estimate), col = "lightblue") +
+    geom_point(data = dat, aes_string(x = x, y = y), alpha = .5, col = "black") +
+  facet_wrap(~ppid) + ggsave(fname)
+  
+  return(p)
+}
+
+
+plot_hist <- function(mod, dat, x, xint){
+  
+  pred <- dat  %>%
+  add_predicted_draws(mod)
+  
+  p <- ggplot(data = pred) +
+  geom_histogram(aes_string(x = x), fill = "red", alpha = .4) +
+  geom_histogram(aes(x = exp(.prediction)), alpha = .4, fill = "blue") +
+  facet_wrap(~ttlc_calc, scales = "free_y") +
+  geom_vline(aes_string(xintercept = xint)) +
+  ylab("density")
+  
+  return(p)
+}
+
+```
+
+
+```{r, non-linear model}
+
+data_RTs <- data_RTs %>% mutate(log_RT = log(RT), log_TR = log(time_remaining), log_ttlc = log(ttlc_calc))
+only_responses <- filter(data_RTs, disengaged == 1, premature == 0, early > 0)
+
+#log(RT) = log(ttlc+cogload) *sigma
+
+
+nl_bf <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload)), 
+            b1 ~1, b2 ~ 1, nl = TRUE)
+
+
+prior1 = c(prior(normal(0, 4), nlpar = "b1"),
+    prior(normal(0, 4), nlpar = "b2"))
+
+#rows containing nas are excluded.
+nl1 = brm(data = only_responses, formula = nl_bf, prior = prior1, family = gaussian())
+
+
+summary(nl1)
+plot(nl1)
+pp_check(nl1)
+
+
+p <- plot_ribbon(nl1, only_responses, 'nl_ribbon.png', 'ttlc_calc','RT')
+print(p)
+p1<-plot_hist(nl1, only_responses, 'nl_hist.png', 'RT', 'time_remaining')
+print(p1)
+
+
+
+
+nl_bf_sig <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload)), sigma ~ (1 | ppid),
+            b1 ~1, b2 ~ 1, nl = TRUE)
+
+nl1_sig = brm(data = only_responses, formula = nl_bf_sig, prior = prior1, family = gaussian())
+
+
+
+
+summary(nl1_sig)
+loo(nl1, nl1_sig)
+loo_model_weights(nl1, nl1_sig)
+pp_check(nl1_sig)
+#print(plot_ribbon(nl1_sig, only_responses, 'nl1sig_ribbon.png', 'ttlc_calc','RT'))
+
+
+nl_bf_sig_inter <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload) + (b3 * cogload*ttlc_calc)), sigma ~ (1 | ppid),
+            b1 ~1, b2 ~ 1, b3 ~ 1, nl = TRUE)
+
+prior3 = c(prior(normal(0, 3), nlpar = "b1"),
+    prior(normal(0, 3), nlpar = "b2"),
+    prior(normal(0, 3), nlpar = "b3"))
+
+nl1_sig_inter = brm(data = only_responses, formula = nl_bf_sig_inter, prior = prior3, family = gaussian(),
+                     iter = 5000, cores = 4, refresh = 500, chains = 4, warmup = 1000, control = list(adapt_delta = 0.90))
+
+
+summary(nl1_sig_inter)
+pp_check(nl1_sig_inter)
+#we could also independently predict the spread, but in a lognormal these spreads cannot be interpreted independently of the means it gets a bit messy.
+
+
+
+
+
+nl_bf_varsig <- bf(log_RT | trunc(ub = log_TR) ~ log((b1 * ttlc_calc) + (b2 * cogload) + (b3*ttlc_calc*cogload)),  sigma ~ (1 | ppid),
+            b1 ~ 1 + (1 | ppid), b2 ~ 1 + (1 | ppid), b3 ~ 1 + (1 | ppid), nl = TRUE)
+
+#could have tighter priors to help with the initialisation.
+prior3 = c(prior(normal(2,2), nlpar = "b1"),
+    prior(normal(2, 2), nlpar = "b2"),
+    prior(normal(2, 2), nlpar = "b3"))
+
+#if the location is below 1 then log is negative and it won't initialise.
+#some work needed here on the correct priors and initialisation formulas once initial draft is complete. 
+if (REFIT == TRUE){
+  nl_varsig = brm(data = only_responses, formula = nl_bf_varsig, prior = prior3, family = gaussian(), inits = c(1,1,1),
+               iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000, control = list(adapt_delta = 0.99))
+  save(nl_varsig, file ='MOD.rda')
+} else {
+  load('MOD.rda')
+}
+
+
+
+
+summary(nl_varsig)
+
+pp_check(nl_varsig)
+
+
+```
+
+```{r, fig1 - visualising predictive intervals}
+
+MOD <- nl_varsig
+#Fig1, overall predictive intervals.
+max(only_responses$ttlc_calc)
+ttlc_calc <- seq(1, to = 13, by = .1)
+log_TR <- 100
+#ppid <- 1:20
+cogload <- c("noload","load")
+pred_list <- expand_grid(ttlc_calc, cogload, log_TR)
+preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(.005, 0.025, .25, .75, 0.975, .995), transform = "exp") %>% 
+  cbind(pred_list) %>% 
+  group_by(ttlc_calc) %>% 
+  mutate(Estimate = mean(Estimate),
+         Q0.5 = min(Q0.5),
+         Q2.5 = min(Q2.5),
+         Q25 = min(Q25),
+         Q75 = max(Q75),
+         Q97.5 = max(Q97.5),
+         Q99.5 = max(Q99.5))
+
+pred_col = "turquoise4"
+data_col = "black"
+ribbon <- ggplot(preds, aes(x = ttlc_calc)) +
+  geom_line(aes(y = Q0.5), col = pred_col, alpha = .5, linetype = 2) +
+    geom_line(aes(y = Q99.5), col = pred_col, alpha = .5, linetype = 2) +
+    geom_line(aes(y = Q2.5), col = pred_col, alpha = .75, linetype = 2) +
+    geom_line(aes(y = Q97.5), col = pred_col, alpha = .75, linetype = 2) +
+    geom_line(aes(y = Q25), col = pred_col, alpha = 1, linetype = 2) +
+    geom_line(aes(y = Q75), col = pred_col, alpha = 1, linetype = 2) +
+    geom_line(aes(y = Estimate), col = pred_col) +
+  geom_point(data = only_responses, aes(x = ttlc_calc, y= RT), alpha = .25, col = data_col) +
+  theme_classic() +
+  xlab("TTLC (s)") + ylab("RT (s)") + ylim(0,15)
+
+print(ribbon)
+ggsave("overall_predictiveintervals.png", plot = ribbon, dev = "png", width = 18, height = 8.5, units = "cm", dpi = 300, type = "cairo")
+  
+
+
+
+```
+
+```{r, appendix plot for overlaid distributions}
+
+#TODO: make plot prettier.
+phist <- plot_hist(MOD, only_responses, 'RT', 'time_remaining')
+ggsave("histogram_ppcheck.png", plot = phist, dev = "png", width = 18, height = 8.5, units = "cm", dpi = 300, type = "cairo")
+
+
+```
+
+
+```{r, Fig2 individual predictive intervals, across load.}
+
+
+#Fig1, overall predictive intervals.
+max(only_responses$RT)
+ttlc_calc <- seq(1, to = 13, by = .1)
+log_TR <- 100
+ppid <- 1:20
+cogload <- c("noload","load")
+pred_list <- expand_grid(ttlc_calc, cogload, ppid, log_TR)
+preds <- predict(MOD, newdata=pred_list, summary=TRUE, probs = c(.005, 0.025, .25, .75, 0.975, .995), transform = "exp") %>% 
+  cbind(pred_list) %>% 
+  group_by(ppid, ttlc_calc) %>% 
+  mutate(Estimate = mean(Estimate),
+         Q0.5 = min(Q0.5),
+         Q2.5 = min(Q2.5),
+         Q25 = min(Q25),
+         Q75 = max(Q75),
+         Q97.5 = max(Q97.5),
+         Q99.5 = max(Q99.5))
+
+ind_ribbon <- ggplot(preds, aes(x = ttlc_calc)) +
+  geom_line(aes(y = Q0.5), col = pred_col, alpha = .5, linetype = 2) +
+    geom_line(aes(y = Q99.5), col = pred_col, alpha = .5, linetype = 2) +
+    geom_line(aes(y = Q2.5), col = pred_col, alpha = .75, linetype = 2) +
+    geom_line(aes(y = Q97.5), col = pred_col, alpha = .75, linetype = 2) +
+    geom_line(aes(y = Q25), col = pred_col, alpha = 1, linetype = 2) +
+    geom_line(aes(y = Q75), col = pred_col, alpha = 1, linetype = 2) +
+    geom_line(aes(y = Estimate), col = pred_col) +
+  facet_wrap(~ppid) +
+  geom_point(data = only_responses, aes(x = ttlc_calc, y= RT), alpha = .5, col = data_col) +
+  theme_classic() +
+  xlab("TTLC (s)") + ylab("RT (s)") + ylim(0,12)
+
+print(ind_ribbon)
+ggsave("pp_predictiveintervals.png", plot = ind_ribbon, dev = "png", width = 18, height = 15, units = "cm", dpi = 300, type = "cairo")
+
+```
+
+
+```{r, Fig3 estimation of mean effect on median}
+
+
+ttlc_calc <- seq(1, to = 13, by = .1)
+log_TR <- 100
+cogload <- c("noload","load")
+pred_list <- expand_grid(ttlc_calc, cogload, log_TR)
+preds <- fitted(MOD, newdata=pred_list, summary=TRUE, re_formula = NA, probs = c(.005, 0.025, .25, .75, 0.975, .995)) %>% 
+  cbind(pred_list) 
+
+cols = c("#16bf81", "#c21756")
+mn_ribbon <- ggplot(preds, aes(x = ttlc_calc, group = cogload, col = cogload)) +
+ # geom_line(aes(y = exp(Q0.5)), alpha = .2, linetype = 2) +
+#    geom_line(aes(y = exp(Q99.5)), alpha = .2, linetype = 2) +
+    geom_line(aes(y = exp(Q2.5)), alpha = .5, linetype = 2) +
+    geom_line(aes(y = exp(Q97.5)), alpha = .5, linetype = 2) +
+#    geom_line(aes(y = exp(Q25)), alpha = .75, linetype = 2) +
+#    geom_line(aes(y = exp(Q75)), alpha = .75, linetype = 2) +
+    scale_colour_manual(values = cols) +
+    geom_line(aes(y = exp(Estimate))) +
+  theme_classic() +
+  xlab("TTLC (s)") + ylab("RT (s)") + ylim(0,12) +
+  theme(legend.position = c(0.2, 0.8))
+
+print(mn_ribbon)
+
+calc_hdis <- function(df){
+  
+  hdi <- df %>% 
+  summarise(HDI2.5 = hdi(ct, credMass = .95)[1],
+            HDI97.5 = hdi(ct, credMass = .95)[2],
+            mn = mean(ct),
+            AboveZero = mean(ct > 0),
+            BelowZero = mean(ct < 0),
+            hdi_95range = HDI97.5 - HDI2.5) %>% 
+    ungroup()
+  
+  return(hdi)
+
+}
+
+#ln(RT) = N ( mu, sigma)
+#mu = log(b1 + b2 + b3)
+#RT med = exp(mu) #median of RT distribution
+#RT med= b1 + b2 + b3
+#the coefficients are in seconds units, and they can be interpreted as a direct effect on the median of the distribution
+
+#plot distribution of main effects and interactions.
+get_variables(MOD)
+fixef_raw <- as.data.frame(fixef(MOD, summary = FALSE))
+fixef_hdi <- as.data.frame(fixef(MOD, summary = TRUE, probs = c(0.025, 0.975)))
+
+head(fixef_raw$b3_Intercept)
+print(fixef_hdi)
+#cogload
+b2_hdi <- fixef_hdi["b2_Intercept",]
+
+remove_yticks <-  theme(axis.text.y = element_blank(),
+  axis.ticks.y = element_blank())
+
+clfixplot <- ggplot() + 
+  geom_histogram(data = fixef_raw, aes(x = -b2_Intercept), bins = 60, fill = "seagreen4", alpha = 1)+
+  geom_segment(data=b2_hdi, aes(x=Q2.5*-1, y=0, xend=Q97.5*-1, yend=0), size=1) + 
+  geom_point(data=b2_hdi, aes(x=Estimate*-1, y=0), size=2) +
+  theme_classic() + 
+  geom_vline(xintercept=0, linetype="dashed", col = "grey40") + 
+  xlim(0, .5) + xlab("RT increase when loaded (s)") + ylab("") + remove_yticks
+  
+print(clfixplot)
+
+#ttlc
+b1_hdi <- fixef_hdi["b1_Intercept",]
+ttlcfixplot <- ggplot() +
+  geom_histogram(data = fixef_raw, aes(x = b1_Intercept), bins = 60, fill = "skyblue3", alpha = 1)+
+  geom_segment(data=b1_hdi, aes(x=Q2.5, y=0, xend=Q97.5, yend=0), size=1) + 
+  geom_point(data=b1_hdi, aes(x=Estimate, y=0), size=2) +
+  theme_classic() + 
+  geom_vline(xintercept=0, linetype="dashed", col = "grey40") +
+  xlim(.4, .9) + xlab("RT increase with TTLC (s)") + ylab("") + remove_yticks
+
+print(ttlcfixplot)
+  
+#cogload * ttlc
+b3_hdi <- fixef_hdi["b3_Intercept",]
+interplot <- ggplot() +
+  geom_histogram(data = fixef_raw, aes(x = -b3_Intercept), bins = 60, fill = "turquoise4", alpha = 1)+
+  geom_segment(data=b3_hdi, aes(x=Q2.5*-1, y=0, xend=Q97.5*-1, yend=0), size=1) + 
+  geom_point(data=b3_hdi, aes(x=Estimate*-1, y=0), size=2) +
+  theme_classic() +
+  geom_vline(xintercept=0, linetype="dashed", col = "grey40") +
+  xlim(-.2, .1) + xlab("Change in TTLC slope with added load (s)") + ylab("") +remove_yticks
+
+print(interplot)
+
+
+right_col <- plot_grid(ttlcfixplot, clfixplot, interplot, nrow = 3, labels = c("B","C","D"), label_size = 12)
+full_grid <- plot_grid(mn_ribbon, right_col, ncol = 2, labels = c("A",""), label_size = 12, rel_widths = c(1,.75))
+print(full_grid)
+
+ggsave("population_coefficient_means.png", plot = full_grid, dev = "png", width = 18, height = 10, units = "cm", dpi = 300, type = "cairo")
+
+```
+
+
+```{r, effect on variance, eval = FALSE}
+
+#ln(RT) = N (mu, sigma)
+#log(sigma) = b_ttlc + b_noload + b_load
+#sigma = exp(b_ttlc + b_noload + b_load...)
+#effect on sigma on the log normal distribution cannot be considered in isolation.
+#variance of ln distributed RT = [exp(sigma^2)-1]exp(2*mu + sigma^2)
+
+
+
+
+
+```
+
+```{r, Fig 4 - within pp variability}
+
+#estimate hdi ranges for each person
+#Fig1, overall predictive intervals.
+max(only_responses$RT)
+ttlc_calc <- seq(1, to = 13, by = .1)
+log_TR <- 100
+ppid <- 1:20
+cogload <- c("noload","load")
+pred_list <- expand_grid(ttlc_calc, cogload, ppid, log_TR)
+pred_ranges <- predict(MOD, newdata=pred_list, summary=TRUE, probs = c(.005, 0.025, .25, .75, 0.975, .995), transform = "exp") %>% 
+  cbind(pred_list) %>% 
+  group_by(ppid, ttlc_calc, cogload) %>% 
+  mutate(R99 = Q99.5 - Q0.5,
+         R95 = Q97.5 - Q2.5,
+         R50 = Q75 - Q25)
+
+#cacl empirical ranges
+emp_ranges <- only_responses %>% 
+  filter(design == "balanced") %>% 
+  group_by(ppid, ttlc_calc, cogload) %>% 
+  summarise(range = max(RT) - min(RT))
+
+head(emp_ranges)
+
+
+ggplot(filter(only_responses, design == "balanced"), aes(x = ttlc_calc, y = RT, col = cogload)) +
+         geom_point(alpha = .5)
+
+range_plot <- ggplot(pred_ranges, aes(x = ttlc_calc, col = cogload, group = cogload)) +
+  geom_line(aes(y = R99), alpha = .5, linetype = 2) +
+    geom_line(aes(y = R95), alpha = .75, linetype = 2) +
+    geom_line(aes(y = R50), alpha = 1, linetype = 2) +
+  geom_line(data = emp_ranges, aes(y = range), linetype = 1) +
+  geom_point(data = emp_ranges, aes(y = range)) +
+  facet_wrap(~ppid) +
+  scale_colour_manual(values = cols) +
+  theme_classic() +
+  xlab("TTLC (s)") + ylab("Ranges") + xlim(1.5,8.5) + ylim(0,7.5)
+
+print(range_plot)
+
+  
+```
+
+
+```{r, lane position over time smoothed plot}
+
+#smoothed plot with bounds. 
+
+
+```
+
+```{r, metrics of steering quality, descriptive plotting}
+
+```
+
+
+
+```{r, old useful code, eval = FALSE}
+
+
+nl_bf_sig2 <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload)),  sigma ~ 1 + ttlc_calc + cogload,
+            b1 ~1, b2 ~ 1, nl = TRUE)
+
+prior2 = c(prior(normal(0, 4), nlpar = "b1"),
+    prior(normal(0, 4), nlpar = "b2"))
+
+nl1_sig2 = brm(data = only_responses, formula = nl_bf_sig2, prior = prior2, family = gaussian())
+
+summary(nl1_sig2)
+loo(nl1_sig2, nl1_sig)
+loo_model_weights(nl1_sig2, nl1_sig)
+pp_check(nl1_sig2)
+
+nl_bf_sig3 <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload)),  sigma ~  0 + ttlc_calc + cogload + (1 | ppid),
+            b1 ~1, b2 ~ 1, nl = TRUE)
+
+prior2 = c(prior(normal(0, 4), nlpar = "b1"),
+    prior(normal(0, 4), nlpar = "b2"))
+
+nl1_sig3 = brm(data = only_responses, formula = nl_bf_sig3, prior = prior2, family = gaussian(),
+               iter = 5000, cores = 4, refresh = 500, chains = 4, warmup = 1000, control = list(adapt_delta = 0.90))
+
+summary(nl1_sig3)
+loo(nl1_sig3, nl1_sig2, nl1_sig)
+loo_model_weights(nl1_sig3, nl1_sig2, nl1_sig)
+pp_check(nl1_sig3)
+
+nl_bf_sig4 <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload) + (b3*ttlc_calc*cogload)),  sigma ~  0 + ttlc_calc + cogload + (1 | ppid),
+            b1 ~1, b2 ~ 1, b3 ~ 1, nl = TRUE)
+
+prior3 = c(prior(normal(0, 3), nlpar = "b1"),
+    prior(normal(0, 3), nlpar = "b2"),
+    prior(normal(0, 3), nlpar = "b3"))
+
+nl1_sig4 = brm(data = only_responses, formula = nl_bf_sig4, prior = prior3, family = gaussian(),
+               iter = 5000, cores = 4, refresh = 500, chains = 4, warmup = 1000, control = list(adapt_delta = 0.90))
+
+#improvement.
+summary(nl1_sig4)
+loo(nl1_sig4, nl1_sig3, nl1_sig2, nl1_sig)
+loo_model_weights(nl1_sig4, nl1_sig3, nl1_sig2, nl1_sig)
+pp_check(nl1_sig4)
+
+nl_bf_sig4.1 <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload) + (b3*ttlc_calc*cogload)),  sigma ~  1 + ttlc_calc + cogload + (1 | ppid),
+            b1 ~1, b2 ~ 1, b3 ~ 1, nl = TRUE)
+
+nl1_sig4.1 = brm(data = only_responses, formula = nl_bf_sig4.1, prior = prior3, family = gaussian(),
+               iter = 5000, cores = 4, refresh = 500, chains = 4, warmup = 1000, control = list(adapt_delta = 0.90))
+
+#should sigma have an intercept? LOO says that the intercept 4.1 is worse than the non-intercept 4
+summary(nl1_sig4.1)
+pp_check(nl1_sig4.1)
+loo(nl1_sig4, nl1_sig4.1)
+
+
+nl_bf_sig5 <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload) + (b3*ttlc_calc*cogload)),  sigma ~  0 + ttlc_calc + cogload + (1 | ppid),
+            b1 ~ 1 + (1 | ppid), b2 ~ 1 + (1 | ppid), b3 ~ 1 + (1 | ppid), nl = TRUE)
+
+prior3 = c(prior(normal(0, 3), nlpar = "b1"),
+    prior(normal(0, 3), nlpar = "b2"),
+    prior(normal(0, 3), nlpar = "b3"))
+
+nl1_sig5 = brm(data = only_responses, formula = nl_bf_sig5, prior = prior3, family = gaussian(),
+               iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000, control = list(adapt_delta = 0.99))
+
+summary(nl1_sig5)
+loo(nl1_sig5, nl1_sig4)
+loo_model_weights(nl1_sig5, nl1_sig4, nl1_sig3, nl1_sig2, nl1_sig)
+pp_check(nl1_sig5)
+plot_ribbon(nl1_sig5, only_responses, 'nl5_ribbon.png', 'ttlc_calc','RT')
+plot_hist(nl1_sig5, only_responses, 'nl5_hist.png', 'RT', 'time_remaining')
+save(nl1_sig5, file ='nl5.rda')
+
+nl_bf_sig5.trunc <- bf(log_RT | trunc(ub = log_TR) ~ log((b1 * ttlc_calc) + (b2 * cogload) + (b3*ttlc_calc*cogload)),  sigma ~  0 + ttlc_calc + cogload + (1 | ppid),
+            b1 ~ 1 + (1 | ppid), b2 ~ 1 + (1 | ppid), b3 ~ 1 + (1 | ppid), nl = TRUE)
+
+nl1_sig5.trunc = brm(data = only_responses, formula = nl_bf_sig5.trunc, prior = prior3, family = gaussian(),
+               iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000, control = list(adapt_delta = 0.99))
+#mu_identity, sigma_log
+
+summary(nl1_sig5.trunc)
+
+save(nl1_sig5.trunc, file ='nl5_trunc.rda')
+
+```
+
