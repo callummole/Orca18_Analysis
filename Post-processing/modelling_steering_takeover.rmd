@@ -149,7 +149,8 @@ show(p_sb)
 
 ```{r data from takeover, echo=FALSE, message=FALSE, warning=FALSE}
 
-motor_delay = .25
+#motor_delay = .25 - for SWA max the motor delay doesn't matter.
+motor_delay = 0
 
 data_fromtakeover <- steergazedata %>% 
   ungroup() %>% 
@@ -359,7 +360,11 @@ cor_table <- data_sb %>%
             SDLP_r = cor.test(swa_max, SDLP, method = "pearson")$estimate,
             SDLP_p = cor.test(swa_max, SDLP, method = "pearson")$p.value,
             rms_r = cor.test(swa_max, rms, method = "pearson")$estimate,
-            rms_p = cor.test(swa_max, rms, method = "pearson")$p.value)
+            rms_p = cor.test(swa_max, rms, method = "pearson")$p.value,
+            RT_r = cor.test(swa_max, RT, method = "pearson")$estimate,
+            RT_p = cor.test(swa_max, RT, method = "pearson")$p.value,
+            sb_RT_r = cor.test(sb_mn, RT, method = "pearson")$estimate,
+            sb_RT_p = cor.test(sb_mn, RT, method = "pearson")$p.value)
 
 
 
@@ -465,7 +470,7 @@ pp_check(m2)
 marginal_effects(m2)
 
 
-form3 <- bf(log_swamax ~ log_ttake * cogload + (1 + log_ttake * cogload | ppid))
+form3 <- bf(log_swamax ~ log(ttlc_onset) * cogload + (1 + log(ttlc_onset) * cogload | ppid))
 
 get_prior(form3, tofit, family=gaussian())
 myprior = c(set_prior("cauchy(0,1)", class="sd", dpar = "Intercept"),

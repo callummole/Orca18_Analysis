@@ -22,15 +22,16 @@ First we load the data.
 
 library("tidyverse")
 library("brms")
+library("rstan")
 library("tidybayes")
 library("wesanderson")
 library("cowplot")
+library(latex2exp)
+library(bayestestR)
 
 ```
 
 ```{r, load data}
-
-REFIT = TRUE #whether to refit models.
 
 
 setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
@@ -56,11 +57,38 @@ steergazedata <- steergazedata %>%
 
 
 
-ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+ttlc_from_offset <- function(b, w = 1.5, r = 80, v = 8){
   b = b / 180 * pi
   
   ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
 }
+
+off = -5.72 / 180 * pi
+rt = ttlc_from_offset(-0.52191351, r = 80)
+
+myttlc <- function(w = 1.5, r = 80, v = 8){
+  ttlc = (w / sin(v/r)) / v
+}
+
+off_tangent <- function(w=1.5,r =80, v = 8){
+  ttlc = sqrt(w*(2*r+w) / (v^2))
+}
+rt = off_tangent()
+
+mammar_zero <- function(w=1.5, r = 80, v = 8){
+  off = v/r
+  dlc = (r+w)*sin(off)-sqrt((r^2 - ((r+w)^2)*(cos(off)^2)))
+  print(dlc)
+  ttlc = dlc/v
+}
+bend_yr = 8/80
+tots = 80+1.5
+sqrt(80^2 - tots^2 * cos(bend_yr)^2)
+sqrt(80^2 - (cos(bend_yr)^2 * tots^2))
+
+tots*sin(bend_yr)
+rt = myttlc()
+rt = mammar_zero()
 
 steergazedata <- steergazedata %>% 
   mutate(ttlc_calc = ttlc_from_offset(sab))
@@ -118,6 +146,7 @@ data_RTs <- steergazedata  %>%
 
 #data_RTs <- mutate(data_RTs, time_remaining = 15 - onsettime,
  #                  early = time_remaining - RT)
+print(unique(data_RTs$ttlc_onset))
 
 data_RTs <- data_RTs %>% mutate(log_ttake = log(ttlc_takeover), log_TR = log(time_remaining), log_tons = log(ttlc_onset))
 data_RTs <- data_RTs %>% mutate(inv_ttake = 1/ttlc_takeover, inv_TET = 1/ttlc_end_of_trial, inv_tons = 1/ttlc_onset)
@@ -231,7 +260,7 @@ med_var <- var_RTs %>%
 head(var_RTs)
 
 #dodge <- position_dodge(width=0.1)  
-p_var <- ggplot(data = var_RTs, aes(x =  1/ttlc_onset, y= log(std), colour = cogload, group = cogload)) +
+p_var <- ggplot(data = var_RTs, aes(x =  log(ttlc_onset), y= log(std), colour = cogload, group = cogload)) +
   geom_point(alpha = .2)
   
 #  geom_point(data = med_var, aes(x = log(ttlc_onset), y= log(med), colour = cogload, group = cogload), alpha = .3, size = 3) +
@@ -239,7 +268,7 @@ p_var <- ggplot(data = var_RTs, aes(x =  1/ttlc_onset, y= log(std), colour = cog
 #  scale_colour_brewer(palette = "Set1") 
   #ylim(0,1.5) + theme_classic()
 
-p_var_dist <- ggplot(data = var_RTs, aes(x = std, fill = cogload, group = cogload)) +
+p_var_dist <- ggplot(data = var_RTs, aes(x = log(std), fill = cogload, group = cogload)) +
   geom_histogram(alpha = .2)+
   facet_wrap(~ttlc_onset)
 
@@ -247,6 +276,10 @@ p_var_dist <- ggplot(data = var_RTs, aes(x = std, fill = cogload, group = cogloa
 print(p_var_dist)
 
 print(p_var)
+
+ggplot(data = var_RTs, aes(x = ttlc_onset, y = std, colour = cogload, group = cogload)) +
+  geom_point(alpha = .5)
+
 #ggsave('var.png', p_var,  device="png", width=18, height= 8.5, units = "cm", dpi=300, type="cairo")
 
 ```
@@ -329,6 +362,15 @@ m_test <- brm(data = data_RTs_cens, formula = bf_intc,
 
 
 ```{r checking best response distribution, echo=FALSE, message=FALSE, warning=FALSE, eval = FALSE}
+
+##############################
+
+#TODO: Tidy section. The incremental model comparison can be in it's own section.
+#The final model, m10.gauss with log link on sigma, should have it's own cell where the priors are also graphed.
+# this is m9.gauss.
+
+#############################
+
 tofit_trim <- filter(data_RTs, premature == 0, disengaged == 1) #include the NA responses
 #use non-disengaged as left-censored
 data_RTs_cens <- data_RTs %>%
@@ -475,7 +517,9 @@ pp_check(m8.gauss)
 ###you really don't need this level of complexity.
 
 #variable slopes on variance.
-bf9 <- bf(ttlc_takeover | trunc(ub = ttlc_onset) + cens(censored) ~ 1 + ttlc_onset * cogload + (1 + ttlc_onset * cogload | ppid), sigma ~ 1 + log(ttlc_onset) * cogload + (1 + log(ttlc_onset) + cogload | ppid))
+bf9 <- bf(ttlc_takeover | trunc(ub = ttlc_onset) + cens(censored) ~ 1 + ttlc_onset * cogload + (1 + ttlc_onset * cogload | ppid), sigma ~ 1 + log(ttlc_onset) + cogload + (1 + log(ttlc_onset) + cogload | ppid))
+
+bf9.1 <- bf(ttlc_takeover | trunc(ub = ttlc_onset) + cens(censored) ~ 1 + ttlc_onset * cogload + (1 + ttlc_onset * cogload | ppid), sigma ~ 1 + log(ttlc_onset) * cogload + (1 + log(ttlc_onset) + cogload | ppid))
 
 fam <- brmsfamily("gaussian", link_sigma = "log")
 
@@ -499,8 +543,9 @@ save_stancode <- function(form, dat, fam, priors = NA, mod = ""){
 
 
 npp <- length(unique(data_RTs_cens$ppid))
-inits9 <- list(list(b_sigma = array(0, dim = 3), Intercept_sigma = 1, sd_2 = array(1, dim =3), z_2 = array(1, dim = c(3,npp)))) #list must be size of the number of
+inits9 <- list(list(b_sigma = array(0, dim = 2), Intercept_sigma = 1, sd_2 = array(1, dim =3), z_2 = array(1, dim = c(3,npp)))) #list must be size of the number of
 
+inits9.1 <- list(list(b_sigma = array(0, dim = 3), Intercept_sigma = 1, sd_2 = array(1, dim =3), z_2 = array(1, dim = c(3,npp)))) #list must be size of the number of
 
 
 #sigma needs to be positive, but it's multiplied by the centred means (which can be negative). To remove the influence on centred means we set b_sigma to zero, and all other variables that contribute to sigma initialisation to 1 (or positive functions)
@@ -515,6 +560,10 @@ m9.gauss <- brm(data = data_RTs_cens, formula = bf9,
                 family = fam, prior = myprior, inits = inits9,
                 iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
 
+m9.1.gauss <- brm(data = data_RTs_cens, formula = bf9.1,
+                family = fam, prior = myprior, inits = inits9.1,
+                iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
 
 summary(m9.gauss)
 plot(m9.gauss)
@@ -525,9 +574,11 @@ m9.gauss[["prior"]]
 
 
 #variable slopes on variance.
+#it makes most sense for the link on sigma to be log, so zero values aren't predicted and the random effects
+#over sigma are log-distributed. This increases the predicted variance at high TTLCs, but c'est la vie.
 bf10 <- bf(ttlc_takeover | trunc(ub = ttlc_onset) + cens(censored) ~ 1 + ttlc_onset * cogload + (1 + ttlc_onset * cogload | ppid), sigma ~ 0 + intercept + ttlc_onset * cogload + (0 +intercept + ttlc_onset + cogload | ppid))
 
-fam <- brmsfamily("gaussian", link_sigma = "identity")
+fam <- brmsfamily("gaussian", link_sigma = "log")
 
 print(get_prior(bf10, data =data_RTs_cens, family=fam))
 #init_f <- function () list(b_sigma = max(0.5,rnorm(1, 3, 1)), Intercept_sigma =  max(0.5,rnorm(1, 3, 1)))
@@ -538,7 +589,7 @@ save_stancode(bf10, data_RTs_cens, fam, priors = myprior, mod = "m10.gauss")
 
 
 npp <- length(unique(data_RTs_cens$ppid))
-inits10 <- list(list(b_sigma = array(1, dim = 4), sd_2 = array(1, dim =4), z_2 = array(1, dim = c(4,npp)))) #list must be size of the number of
+#inits10 <- list(list(b_sigma = array(1, dim = 4), sd_2 = array(1, dim =4), z_2 = array(1, dim = c(4,npp)))) #list must be size of the number of
 
 
 
@@ -552,8 +603,8 @@ myprior = c(set_prior("normal(0,5)", class="b"),
             
 
 m10.gauss <- brm(data = data_RTs_cens, formula = bf10,
-                family = fam, prior = myprior, inits = inits10,
-                iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+                family = fam, prior = myprior, #inits = inits10,
+                iter = 20000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
 
 
 summary(m10.gauss)
@@ -563,22 +614,22 @@ save(m10.gauss, file = 'm10.gauss.rda')
 
 m10.gauss[["prior"]]
 ```
+```{r, plot logsigma}
+failures <-  seq(1, to = 13, by = .1)
+logsig = (.6*log(failures))
 
 
-```{r, distribution described}
-
-n = 10000
-ttlc_onset <- 5 #todo: draw from posterior.
-ttlc_eot <- 1
-dist <- rnorm(n, 1.8, .5) #not a million miles away #could be exact.
-#trunc_dist <- dist
-
+inter <- failures^-.26
+plot(exp(logsig))
+plot(inter)
 ```
+
 
 
 ```{r, individual plot of predictive intervals}
 
-
+load('m9.gauss.rda')
+MOD <- m9.gauss
 
 plot_ind_preds <- function(MOD){
   ttlc_onset <- seq(1, to = 13, by = .1)
@@ -612,11 +663,11 @@ plot_ind_preds <- function(MOD){
   
   print(ind_ribbon)  
   modstr = deparse(substitute(MOD))
-  ggsave(paste("pp_predictiveintervals_",modstr,".png",sep=""), plot = ind_ribbon, dev = "png", width = 18, height = 15, units = "cm", dpi = 300, type = "cairo")
+  #ggsave(paste("pp_predictiveintervals_",modstr,".png",sep=""), plot = ind_ribbon, dev = "png", width = 18, height = 15, units = "cm", dpi = 300, type = "cairo")
   
 }
 
-plot_ind_preds(m10.gauss)
+plot_ind_preds(m9.gauss)
 
 
 
@@ -678,7 +729,7 @@ plot_hist <- function(mod, dat, x, xint){
 
 ```{r, fig1 - visualising predictive intervals for no load}
 
-MOD <- m10.gauss
+MOD <- m9.gauss
 
 
 onesd = .683
@@ -716,6 +767,12 @@ ticks <- data_RTs %>%
   mutate(ttlc_onset_round = round(ttlc_onset, digits = 1)) %>% 
   select(ttlc_onset, ttlc_onset_round) %>% 
   unique(.)
+
+#data_RTs %>% 
+#  filter(design=="balanced", cogload == "noload", premature == 0) %>% 
+#  group_by(ttlc_onset) %>% 
+#  summarise(maxttlc = max(ttlc_takeover))
+
 
 
 censors <- data_RTs_cens %>%
@@ -768,6 +825,12 @@ ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
   annotate("text", x = 13.25, y = 6.2, label = expression(mu*" + "*sigma), hjust = 0, vjust = 0, size = 2.5) +
   annotate("text", x = 13.2, y = 8.2, label = expression(mu*" + 2"*sigma), hjust = 0, vjust = 0, size = 2.5) +
   
+  #annotate("point", x = 4.2, y= 4.2, col = "grey20", shape = 1) +
+  annotate("path", x = 4.2, y= c(2.606,4.2), col = "grey20", linetype = "dotted") +
+  #annotate("point", x = 4.2, y= 2.606, col = "grey20", shape = 1) +
+  annotate("text", x = 4.3, y = 3.5, label = "RT", hjust = 0, vjust = 0, size = 2) +
+  
+  
   theme_classic() +
   xlab(expression("TTLC"["Failure"]*" (s)")) + ylab(expression("TTLC"["Takeover"]*" (s)")) + 
   coord_cartesian(xlim = c(0,13.25), ylim = c(-1,8)) +
@@ -791,12 +854,135 @@ ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
 
 
 print(ribbon)
-#ggsave("overall_predictiveintervals_ttlc_noload.png", plot = ribbon, dev = "png", width = 18, height = 8.5, units = "cm", dpi = 300, type = "cairo")
+#ggsave("overall_predictiveintervals_ttlc_noload_log_nointer.png", plot = ribbon, dev = "png", width = 18, height = 8.5, units = "cm", dpi = 300, type = "cairo")
   
 
 
 
 ```
+
+```{r, fig1 - visualising predictive intervals for load}
+
+MOD <- m9.gauss
+
+
+onesd = .683
+onesd.l = .5 - (onesd/2)
+onesd.u = .5 + (onesd/2)
+twosd = .955
+twosd.l = .5 - (twosd/2)
+twosd.u = .5 + (twosd/2)
+
+
+
+#avg_onset = mean(data_RTs_cens$onsettime)
+#Fig1, overall predictive intervals.
+ttlc_onset <- seq(.1, to = 17, by = .5)
+#mean_censoring <- ttlc_onset - (15 - avg_onset)
+#censor <- data.frame(ttlc_onset, mean_censoring)
+cogload <- c("load")
+pred_list <- expand_grid(ttlc_onset, cogload)
+preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
+  cbind(pred_list) %>%
+  group_by(ttlc_onset) %>% 
+  mutate(Estimate = mean(Estimate),
+         Q2.25 = min(Q2.25),
+         Q15.85 = min(Q15.85),
+         Q84.15 = min(Q84.15),
+         Q97.75 = max(Q97.75))
+
+
+pred_col = "grey60"
+data_col = "black"
+
+ticks <- data_RTs %>% 
+  filter(design == "balanced") %>% 
+  ungroup() %>% 
+  mutate(ttlc_onset_round = round(ttlc_onset, digits = 1)) %>% 
+  select(ttlc_onset, ttlc_onset_round) %>% 
+  unique(.)
+
+
+censors <- data_RTs_cens %>%
+  ungroup() %>% 
+  filter(cogload == "load") %>% 
+  mutate(xmin = ttlc_onset - .15,
+         xmax = ttlc_onset + .15) %>% 
+  select(ttlc_onset, onsettime, ttlc_end_of_trial, xmin, xmax) %>% 
+  group_by(ttlc_onset, onsettime) %>% 
+  summarise(mineot = min(ttlc_end_of_trial)) 
+  #filter(ttlc_onset > 5 & ttlc_onset < 13)
+
+onsets <- c(5.375, 6.5)
+censor_lines <- lapply(onsets, function(x) ttlc_onset - (15 -x))
+
+
+censor_m <- lm(mineot ~ poly(ttlc_onset,3), data = censors)
+
+censor_predict <- stats::predict(object = censor_m, newdata = as.data.frame(ttlc_onset))
+
+
+ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
+  geom_ribbon(aes(ymin = Q2.25, ymax = Q97.75), fill = pred_col, col = NA, alpha = .1) + #99% band
+  geom_ribbon(aes(ymin = Q15.85, ymax = Q84.15), fill = pred_col, alpha = .3) + #50% band
+  geom_line(aes(y = Estimate), col = pred_col, size = 2) + #mean
+  
+  
+  #geom_line(aes(y = Q0.5), col = pred_col, alpha = .5, linetype = 2) +
+  #geom_line(aes(y = Q99.5), col = pred_col, alpha = .5, linetype = 2) +
+    
+  #  geom_line(aes(y = Q2.5), col = pred_col, alpha = .75, linetype = 2) +
+  #  geom_line(aes(y = Q97.5), col = pred_col, alpha = .75, linetype = 2) +
+#    geom_line(aes(y = Q25), col = pred_col, alpha = 1, linetype = 2) +
+  #  geom_line(aes(y = Q75), col = pred_col, alpha = 1, linetype = 2) +
+  #  
+  geom_point(data = filter(data_RTs_cens, cogload == "load"), aes(x = ttlc_onset, y= ttlc_takeover), alpha = .25, col = data_col) + #raw data
+  geom_abline(intercept = 0, slope = 1, linetype = 2, col = "grey40") + #1:1 line
+  
+  #geom_segment(data = censors, aes(x = ttlc_onset-.1, xend = ttlc_onset+.1, y = mineot, yend = mineot), size = 1, col = "red") +
+  annotate("path", x = ttlc_onset, y = censor_lines[[1]], col = "grey20", linetype = "dotted") +
+  #annotate("path", x = ttlc_onset, y = censor_lines[[2]], col = "grey20", linetype = "dotted") +
+  annotate("point", x = 12.96, y= 3.33, col = "black", shape = 3) +
+  #annotate("point", x = 10.42, y= 1.92, col = "black", shape = 3) +
+  annotate("text", x = 12.7, y = 3.1, label = "Onset 5.38 s", hjust = 0, vjust = 0, size = 2) +
+  #annotate("text", x = 10.2, y = 1.6, label = "Onset 6.5 s", hjust = 0, vjust = 0, size = 2) +
+  annotate("text", x = 10.5, y = .5, label = expression("Example TTLC"["End of Trial"]), hjust = 0, vjust = 0, size = 2.5) +
+  #geom_ribbon(data = censors, aes(x = ttlc_onset, ymin = -50, ymax = mineot), fill = "firebrick3") +
+  #geom_point(data =filter(data_RTs_cens, cogload == "noload"), aes(x = ttlc_onset, y =ttlc_end_of_trial, col = onsettime)) +
+  annotate("text", x = 13.5, y = 4.5, label = expression(mu), hjust = 0, vjust = 0, size = 2.5) +
+  annotate("text", x = 13.25, y = 6.2, label = expression(mu*" + "*sigma), hjust = 0, vjust = 0, size = 2.5) +
+  annotate("text", x = 13.2, y = 8.2, label = expression(mu*" + 2"*sigma), hjust = 0, vjust = 0, size = 2.5) +
+  
+  theme_classic() +
+  xlab(expression("TTLC"["Failure"]*" (s)")) + ylab(expression("TTLC"["Takeover"]*" (s)")) + 
+  coord_cartesian(xlim = c(0,13.25), ylim = c(-1,8)) +
+  scale_x_continuous(breaks = ticks$ttlc_onset, labels = ticks$ttlc_onset_round)
+  
+  
+ # scale_color_gradient(low = "firebrick3", high = "rosybrown1") + guides(color = FALSE) +
+  
+  #add custom legend 
+  #geom_segment(aes(x = 15, xend = 15.5, y = -1, yend = -1), col = "rosybrown1", size = 1.5) +
+  #geom_segment(aes(x = 15, xend = 15.5, y = -1.75, yend = -1.75), col = "firebrick3", size = 1.5) +
+  #annotate("text", x = 15.75, y = 0, label = expression("TTLC"["End of Trial"]), size = 3) +
+  #annotate("text", x = 16.25, y = -1, label = "Late onset", size = 2.5) +
+  #annotate("text", x = 16.25, y = -1.75, label = "Early onset", size = 2.5) 
+
+#ggplot(filter(data_RTs_cens, cogload == "noload")) +
+#  geom_point(aes(x = ttlc_onset, y= ttlc_takeover), alpha = .25, col = data_col) + #raw data
+#  geom_point(aes(x = ttlc_onset, y= ttlc_end_of_trial, col = factor(onsettime)), alpha = .25) + #raw data
+#  facet_wrap(~ttlc_onset)
+ 
+
+
+print(ribbon)
+ggsave("overall_predictiveintervals_ttlc_load_log_nointer.png", plot = ribbon, dev = "png", width = 18, height = 8.5, units = "cm", dpi = 300, type = "cairo")
+  
+
+
+
+```
+
 
 ```{r, calculate how many are above 99% bounds}
 
@@ -827,7 +1013,8 @@ print(nrow(exceed)/total_trials)
 
 
 ```{r, Fig 2 - predictive intervals for cogload conditions}
-
+MOD<-m9.gauss
+#parnames(m9.gauss)
 
 onesd = .683
 onesd.l = .5 - (onesd/2)
@@ -853,54 +1040,559 @@ preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, 
          Q97.75 = max(Q97.75))
 
 
+
+#preds_sig <- fitted(MOD, newdata=pred_list, summary=TRUE, re_formula = NULL, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u), dpar = "sigma") %>% 
+#  cbind(pred_list)
+
+#names(preds_sig)[1] <- "sigma"
+#fixedeffs <- full_join(preds, preds_sig, by = c("ttlc_onset","cogload"))
+
 #old_preds <- preds
 cogload_cols = c("#e3372b","#2bd7e3")
 
 ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
   geom_ribbon(aes(ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1) + #99% band
   geom_ribbon(aes(ymin = Q15.85, ymax = Q84.15, fill = cogload), col = NA, alpha = .3) + #50% band
-  #geom_line(aes(y = Q0.5, col = cogload), alpha = .4, linetype = 2) +
+  
+  
+  #geom_line(data = fixedeffs, aes(y = Estimate + sigma, col = cogload), alpha = 1, linetype = "dotted") +
+  #geom_line(data = fixedeffs, aes(y = Estimate - sigma, col = cogload), alpha = 1, linetype = "dotted") +
+  #geom_line(data = fixedeffs, aes(y = Estimate + (sigma*2), col = cogload), alpha = .5, linetype = "dotted") +
+  #geom_line(data = fixedeffs, aes(y = Estimate - (sigma*2), col = cogload), alpha = .5, linetype = "dotted") +
+  
+  #annotate("text", x = 13.1, y = 4.3, label = expression(mu), hjust = 0, vjust = 0, size = 2.5) +
+  #annotate("text", x = 12.75, y = 5.65, label = expression(mu*" + "*sigma), hjust = 0, vjust = 0, size = 2.5) +
+  #annotate("text", x = 12.6, y = 7.5, label = expression(mu*" + 2"*sigma), hjust = 0, vjust = 0, size = 2.5) +
+  
   #geom_line(aes(y = Q99.5, col = cogload), alpha = .4, linetype = 2) +
   #geom_line(aes(y = Q25, col = cogload), alpha = 1, linetype = 2) +
   #geom_line(aes(y = Q75, col = cogload), alpha = 1, linetype = 2) +
   geom_line(aes(y = Estimate, col = cogload), size = 1) + #mean
-  scale_color_manual(values = cogload_cols, guide = guide_legend(reverse = TRUE)) + scale_fill_manual(values = cogload_cols) + guides(fill = FALSE) +
+  scale_color_manual(values = cogload_cols, guide = guide_legend(reverse = TRUE), labels = c('SupAuto+ACMT', 'SupAuto')) + 
+  scale_fill_manual(values = cogload_cols) + guides(fill = FALSE) +
   theme_classic() +
   xlab(expression("TTLC"["Failure"]*" (s)")) + ylab(expression("TTLC"["Takeover"]*" (s)")) +
   coord_cartesian(ylim = c(-1,8), xlim = c(0,13)) +
   theme(legend.position = c(0.2, 0.8),
         legend.title = element_blank())
   
-print(ribbon)
+#print(ribbon)
 #ggsave("overall_predictiveintervals_nodata.png", plot = ribbon, dev = "png", width = 18, height = 8.5, units = "cm", dpi = 300, type = "cairo")
 
 
-pars = c("b_Intercept", "b_ttlc_onset", "b_cogloadload", "b_ttlc_onset:cogloadload", "b_sigma_Intercept", "b_sigma_ttlc_onset",
-               "b_sigma_cogloadload", "b_sigma_ttlc_onset:cogloadload")
+pars = c("b_Intercept", "b_ttlc_onset", "b_cogloadload", "b_ttlc_onset:cogloadload", "b_sigma_Intercept", "b_sigma_logttlc_onset",
+               "b_sigma_cogloadload")# "b_sigma_ttlc_onset:cogloadload")
 
 
-breaks = c("b_I","b_to", "b_cl", "b_to:cl", "b_sig_I", "b_sig_to",
-               "b_sig_cl", "b_sig_to:cl")
+breaks = c(parse(text = TeX('$\\beta_{\\mu I}$')),
+           parse(text = TeX('$\\beta_{\\mu TF}$')),
+           parse(text = TeX('$\\beta_{\\mu CL}$')), 
+           parse(text = TeX('$\\beta_{\\mu TOCL}$')),
+           parse(text = TeX('$e^{\\beta_{\\sigma I}}$')), 
+           parse(text = TeX('$\\beta_{\\sigma TF}$')),
+           parse(text = TeX('$e^{\\beta_{\\sigma CL}}$')))
+               
+
+#                            'd'=TeX('$mode(L_{ij})$'),
+#                            'ft'=parse(text = TeX('$R_{ij}$')),
+#                            'ew'=parse(text = TeX('$Q_{ij}$')),
+#xlab(expression(paste(beta, " TTLC"["Failure"]))) +
 
 draws_coef <- MOD %>% 
   posterior_samples(., pars = pars) %>% 
   gather(key = "b", value = "estimate") %>% 
   group_by(b) %>% 
   mode_hdi() %>% 
-  mutate(b = fct_relevel(b, "b_Intercept", "b_ttlc_onset", "b_cogloadload", "b_ttlc_onset:cogloadload", "b_sigma_Intercept", "b_sigma_ttlc_onset",               "b_sigma_cogloadload", "b_sigma_ttlc_onset:cogloadload"))
+  mutate(b = fct_relevel(b, "b_Intercept", "b_ttlc_onset", "b_cogloadload", "b_ttlc_onset:cogloadload", "b_sigma_Intercept", "b_sigma_logttlc_onset",               "b_sigma_cogloadload")) %>% 
+  arrange(b)
+
+draws_coef[5,2:4] <- exp(draws_coef[5,2:4])
+draws_coef[7,2:4] <- exp(draws_coef[7,2:4])
+
 
 forest <- ggplot() +
+  geom_vline(xintercept = 0, linetype= "dashed", col = "grey80") +
   geom_pointintervalh(data = draws_coef,aes(y = reorder(b, desc(b)), x = estimate, xmin = .lower, xmax = .upper), col = "black", fatten_point = .5) +
   theme_classic() +
-  geom_vline(xintercept = 0, linetype= "dashed", col = "grey80") +
   scale_y_discrete(labels = rev(breaks))+
-  ylab("Coefficients")
+  ylab("Coefficients") +
+  xlab("Estimate") 
+
+
+#bottom_row <- plot_grid(forest_mu, forest_sig, ncol =2, labels = c("B","C"), label_size = 12)
+
+effects_grid <- plot_grid(forest, ribbon, ncol = 2, labels = c("A","B"), label_size = 12, rel_widths = c(1,1.5))
+print(effects_grid)
+ggsave("ttlc_effects_v4.png", plot = effects_grid, dev = "png", width = 18, height = 7, units = "cm", dpi = 300, type = "cairo")
+
+#ggsave("fixed_effects_ttlctakeover.png", plot = effects_grid, dev = "png", width = 18, height = 7, units = "cm", #dpi = 300, type = "cairo")
+```
+
+```{r, scratchpad}
+
+
+```
+
+
+```{r, functions for predicting random effect distributions, minus estimation uncertainty}
+
+#predictive distribution of map and sigma for single row of parameters (so you can choose to include uncertainty or not)
+predict_condition_dpars_fixed <- function(row, ttlc_onset){
   
-print(forest)
+  
+  
+  
+  #########
+  # in the model mu and sigma are predicted independently in seperate regression models.
+  # by construction all the coefficients in each model have estimated sds and correlations with one another
+  # here we formulate a covariance matrix then simulate a predictive distribution of coefficients for both mu and sigma.
+  
+  # mu = b_Intercept + b_ttlc_onset*ttlc_onset + b_cogloadload * cogload + b_ttlc_onset:cogloadload * ttlc_onset*cogload
+  
+  #log(sigma) = b_sigma_Intercept + b_sigma_logttlc_onset*log(ttlc_onset) + b_sigma_cogloadload*cogload
+  #########
+  row <- select(row, starts_with('b'))
+  mu_dist <- row
+  sig_dist <- row
+  
+    for (to in ttlc_onset){
+      varname <- paste(to, "load", sep="_")
+    
+    mu_dist[[varname]] <- with(row, b_Intercept + b_ttlc_onset*to + b_cogloadload*1 + `b_ttlc_onset.cogloadload`*(to*1))
+    sig_dist[[varname]] <- with(row, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*1)
+    
+    
+    varname <- paste(to, "noload", sep="_")
+    mu_dist[[varname]] <- with(row, b_Intercept + b_ttlc_onset*to + b_cogloadload*0 + `b_ttlc_onset.cogloadload`*(to*0))
+    sig_dist[[varname]] <- with(row, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*0)
+  }
+      
+      
+  mu_long <- mu_dist %>% 
+    pivot_longer(-starts_with('b'),
+                 names_to = c("ttlc_onset","cogload"),
+                 names_sep = "_",
+                 values_to = "mu")
+  
+  sig_long <- sig_dist %>% 
+    pivot_longer(-starts_with('b'),
+                 names_to = c("ttlc_onset","cogload"),
+                 names_sep = "_",
+                 values_to = "sigma")
+  
+  #exponentiate sigma so you can treat it as a distributional parameters henceforth
+  sig_long$sigma <- exp(sig_long$sigma)
+
+  #return here
+  dpar_dists <- list(mu_long, sig_long)
+  return(dpar_dists)
+  
+  
+}
 
 
-effects_grid <- plot_grid(ribbon, forest, ncol = 2, labels = c("A","B"), label_size = 12, rel_widths = c(1.5,1))
-ggsave("ttlc_effects.png", plot = effects_grid, dev = "png", width = 18, height = 6, units = "cm", dpi = 300, type = "cairo")
+predict_coeff_dist <- function(row, nsamples){
+
+  #########
+  # in the model mu and sigma are predicted independently in seperate regression models.
+  # by construction all the coefficients in each model have estimated sds and correlations with one another
+  # here we formulate a covariance matrix then simulate a predictive distribution of coefficients for both mu and sigma.
+  
+  # mu = b_Intercept + b_ttlc_onset*ttlc_onset + b_cogloadload * cogload + b_ttlc_onset:cogloadload * ttlc_onset*cogload
+  
+  #log(sigma) = b_sigma_Intercept + b_sigma_logttlc_onset*log(ttlc_onset) + b_sigma_cogloadload*cogload
+  #########
+  
+
+  
+  #### mu #####
+  #intercept
+  cov_int_to <- with(row, sd_ppid__Intercept*sd_ppid__ttlc_onset*cor_ppid__Intercept__ttlc_onset)
+  cov_int_cl <- with(row, sd_ppid__Intercept*sd_ppid__cogloadload*cor_ppid__Intercept__cogloadload)
+  cov_int_to.cl <- with(row, sd_ppid__Intercept*sd_ppid__ttlc_onset.cogloadload*cor_ppid__Intercept__ttlc_onset.cogloadload)
+  
+  #ttlc
+  cov_to_cl <- with(row,sd_ppid__ttlc_onset*sd_ppid__cogloadload*cor_ppid__ttlc_onset__cogloadload)
+  cov_to_to.cl <- with(row,sd_ppid__ttlc_onset*sd_ppid__ttlc_onset.cogloadload*cor_ppid__ttlc_onset__ttlc_onset.cogloadload)
+  
+  #cl
+  cov_cl_to.cl <- with(row, sd_ppid__cogloadload*sd_ppid__ttlc_onset.cogloadload*cor_ppid__cogloadload__ttlc_onset.cogloadload)
+  
+  
+  cov_mat_mu = with(row, matrix(
+    c(sd_ppid__Intercept^2, cov_int_to, cov_int_cl, cov_int_to.cl,
+      cov_int_to, sd_ppid__ttlc_onset^2, cov_to_cl, cov_to_to.cl,
+      cov_int_cl, cov_to_cl, sd_ppid__cogloadload^2, cov_cl_to.cl,
+      cov_int_to.cl, cov_to_to.cl, cov_cl_to.cl, sd_ppid__ttlc_onset.cogloadload^2), ncol = 4))
+  
+  
+  print(cov_mat_mu)
+  mu_dist <- as.data.frame(MASS::mvrnorm(nsamples, c(row$b_Intercept, row$b_ttlc_onset, row$b_cogloadload, row$b_ttlc_onset.cogloadload), cov_mat_mu))
+  
+  colnames(mu_dist) <- c("b_Intercept","b_ttlc_onset","b_cogloadload","b_ttlc_onset.cogloadload")
+  mu_dist$pp <- 1:nsamples
+  
+  #### sigma ####
+  
+  #intercept
+  cov_int_to <- with(row, sd_ppid__sigma_Intercept*sd_ppid__sigma_logttlc_onset*cor_ppid__sigma_Intercept__sigma_logttlc_onset)
+  cov_int_cl <- with(row, sd_ppid__sigma_Intercept*sd_ppid__sigma_cogloadload*cor_ppid__sigma_Intercept__sigma_cogloadload)
+  cov_to_cl <- with(row,sd_ppid__sigma_logttlc_onset*sd_ppid__sigma_cogloadload*cor_ppid__sigma_logttlc_onset__sigma_cogloadload)
+  
+  cov_mat_sig = with(row, matrix(
+    c(sd_ppid__sigma_Intercept^2, cov_int_to, cov_int_cl, 
+      cov_int_to, sd_ppid__sigma_logttlc_onset^2, cov_to_cl, 
+      cov_int_cl, cov_to_cl, sd_ppid__sigma_cogloadload^2), ncol = 3))
+  
+  
+  sig_dist <- as.data.frame(MASS::mvrnorm(nsamples, c(row$b_sigma_Intercept, row$b_sigma_logttlc_onset, row$b_sigma_cogloadload), cov_mat_sig))
+  
+  colnames(sig_dist) <- c("b_sigma_Intercept","b_sigma_logttlc_onset","b_sigma_cogloadload")
+  sig_dist$pp <- 1:nsamples
+  
+  #return for two distributions here here.
+  dists <- list(mu_dist, sig_dist)
+  return(dists)
+}
+  
+  
+predict_condition_dpars <- function(ttlc_onset, coef_dists){   
+  
+  mu_dist <- coef_dists[[1]]
+  sig_dist <- coef_dists[[2]]
+  
+  for (to in ttlc_onset){
+    varname <- paste(to, "load", sep="_")
+    
+    mu_dist[[varname]] <- with(mu_dist, b_Intercept + b_ttlc_onset*to + b_cogloadload*1 + `b_ttlc_onset.cogloadload`*(to*1))
+    sig_dist[[varname]] <- with(sig_dist, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*1)
+    
+    
+    varname <- paste(to, "noload", sep="_")
+    mu_dist[[varname]] <- with(mu_dist, b_Intercept + b_ttlc_onset*to + b_cogloadload*0 + `b_ttlc_onset.cogloadload`*(to*0))
+    sig_dist[[varname]] <- with(sig_dist, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*0)
+  }
+      
+      
+  mu_long <- mu_dist %>% 
+    pivot_longer(-c(starts_with('b'),'pp'),
+                 names_to = c("ttlc_onset","cogload"),
+                 names_sep = "_",
+                 values_to = "mu")
+  
+  sig_long <- sig_dist %>% 
+    pivot_longer(-c(starts_with('b'),'pp'),
+                 names_to = c("ttlc_onset","cogload"),
+                 names_sep = "_",
+                 values_to = "sigma")
+  
+  #exponentiate sigma so you can treat it as a distributional parameters henceforth
+  sig_long$sigma <- exp(sig_long$sigma)
+
+  #return here
+  dpar_dists <- list(mu_long, sig_long)
+  return(dpar_dists)
+}
+  
+
+simulate_ttlctakeovers <- function(dpar_dists, nobs = 10){
+  #simulate participants. since mu and sigma are considered independent in the model, just randomly draw from them separately
+  mu_long <- dpar_dists[[1]]
+  sig_long <- dpar_dists[[2]]
+  mu_long$sigma <- sig_long$sigma
+  
+  #for each participant you want to sample n obs at the conditions.
+  obs <- rnorm(nrow(mu_long)*nobs, mu_long$mu, mu_long$sigma)
+  full_df <- cbind(mu_long, matrix(obs, nrow = nrow(mu_long), byrow = FALSE))
+  full_df$ttlc_onset <- as.numeric(full_df$ttlc_onset)
+  return(full_df)
+}
+
+
+quantile_range <- function(full_df, quantiles){
+  
+  df <- full_df %>% 
+    pivot_longer(matches("^[[:digit:]]+"),
+                 values_to = "ttlc_takeover") %>% 
+    filter(ttlc_takeover < ttlc_onset) %>% #truncated dist
+    group_by(ttlc_onset, cogload) %>% 
+    summarise(q1 = quantile(ttlc_takeover, quantiles[1]),
+              q2 = quantile(ttlc_takeover, quantiles[2]),
+              range95 = q2 - q1)
+  
+  return(df)
+}
+  
+  
+  
+  
+avg_pcross <- function(dpar_dists){
+  
+  #for each participant (randomly drawn mu and sigma) calculate a pcross.
+  mu_long <- dpar_dists[[1]]
+  sig_long <- dpar_dists[[2]]
+  
+  mu_long$sigma <- sig_long$sigma
+  mu_long <- mu_long %>% 
+    group_by(pp, ttlc_onset, cogload) %>% 
+    mutate(pcross = pnorm(0, mu, sigma))
+  
+  
+  pcross_avg <- mu_long %>% 
+    ungroup() %>% 
+    group_by(ttlc_onset, cogload) %>% 
+    summarise(pcross = mean(pcross, na.rm = TRUE))
+  pcross_avg$ttlc_onset <- as.double(pcross_avg$ttlc_onset)
+  
+  return(pcross_avg)
+}
+
+
+
+
+```
+
+
+```{r, obtaining MAP point estimate by maximising over joint posterior}
+
+#use map estimate from bayestestR
+#doesn't give sds, but could get that from the SDS of the modes. Not quite this doesn't seem to be how it works.
+
+#sample_new_levels = gaussian does what I do manually (i.e. take each row and sample using the covar matrix).
+#but how to do this using the MAP jointly credible?
+
+#https://github.com/paul-buerkner/brms/issues/191 useful discussion on the sample new levels value.
+
+#but MAP_estimate doesn't a jointly credible sample space.bayes
+
+#have posted on stan forums for the MAP params. If they don't get back to me I'll not worry about partialling out the estimation uncertainty.
+
+#https://mc-stan.org/rstan/reference/stanmodel-method-optimizing.html
+
+#https://easystats.github.io/bayestestR/reference/map_estimate.html
+
+pars <- parnames(MOD)
+map_btest <- map_estimate(MOD,effects = "all")
+
+map_sig <- fitted(MOD, newdata=pred_list, summary=TRUE, re_formula = NA, dpar = "sigma")# %>% 
+map_sig_pred <- fitted(MOD, newdata=pred_list, summary=FALSE, re_formula = NULL, allow_new_levels = T, sample_new_levels = "gaussian", dpar = "sigma")# %>% 
+
+describe_posterior(
+  MOD,
+  effects = "all",
+  component = "all",
+  centrality = "all"
+)
+  #cbind(pred_list) %>% 
+  #mutate(range95 = Estimate*2)
+
+
+#is the sd of a sample row just the sd of the estimated fixed effects? 
+samples <- as.data.frame(MOD[["fit"]]@sim[["samples"]][[1]])
+samples <- samples[1001:10000, ]
+
+
+string = "r_ppid.1.Intercept."
+pattern = "r.ppid.\\d{1,}.Intercept."
+grep(pattern, string)
+samplerow <- samples[1,]
+cols = grep(pattern, names(samplerow))
+print(cols)
+grp_ints <- samplerow[cols]
+sd_ints <- sd(grp_ints)
+samplerow$sd_ppid__Intercept
+
+sm <- MOD[["fit"]]@stanmodel
+class(sm)
+map_rstan <- optimizing(sm)
+
+
+post <- posterior_samples(MOD)
+samples <- as.data.frame(MOD[["fit"]]@sim[["samples"]][[1]])
+samples <- samples[1001:10000, ]
+#to get the full random effects parameters you need to do it yourself
+mymap <- sapply(samples, map_estimate)
+mymaps <- data.frame("parameters" = names(mymap), "MAP" = mymap)
+map_params <- mymaps %>% 
+  pivot_wider(names_from = "parameters",
+              values_from = "MAP")
+
+#the map_param covariance is not positive definite.
+#instead, let's choose one closest to the modal likehood.
+logsumexp <- function (x) {
+  y = max(x)
+  y + log(sum(exp(x - y)))
+}
+
+softmax <- function (x) {
+  exp(x - logsumexp(x))
+}
+
+library(mda)
+
+lp <- log_posterior(MOD)
+
+plot(lp$Value)
+hist(softmax(lp$Value))
+hist(lp$lik, binsize = .1)
+plot(lp$lik)
+
+ggplot(lp, aes(x = lik)) + geom_histogram(binwidth = .01)
+
+lp$lp <- samples$lp__
+lp <- lp %>% 
+  mutate(lik = softmax(Value))
+ll <- log_lik(MOD)
+highest_lp <- samples[719,]
+
+ll_manual <- rowSums(ll)
+idx <- which.max(ll_manual)
+ll_exp <- exp(ll_manual - max(ll_manual))
+plot((ll_exp))
+hist(ll_exp, breaks = 30)
+
+ll_exp_df <- as.data.frame(ll_exp)
+ggplot(filter(ll_exp_df, ll_exp < .001), aes(x = ll_exp)) + geom_histogram(binwidth = .0001)
+
+highest_manual_ll <- samples[3212,]
+
+hist(samples$lp__)
+modelp <- Mode(samples$lp__)
+diff <- modelp -samples$lp__
+idx <- which.min(abs(diff))
+
+pars <- parnames(MOD)[1:23]
+
+mymap <- sapply(samples, map_estimate)
+mymaps <- data.frame("parameters" = names(mymap), "MAP" = mymap)
+map_params1 <- samples[idx, ]
+
+
+optimizing(MOD)
+
+sm <- MOD[['fit']]@stanmodel
+rstan::optimizing(sm)
+
+```
+
+
+```{r, random effects plots}
+twosd = .955
+twosd.l = .5 - (twosd/2)
+twosd.u = .5 + (twosd/2)
+
+
+ttlc_onset <- seq(.25, to = 15, by = .25)
+#mean_censoring <- ttlc_onset - (15 - avg_onset)
+#censor <- data.frame(ttlc_onset, mean_censoring)
+#ppid <- 1:20
+cogload <- c("noload","load")
+
+pred_list <- expand_grid(ttlc_onset, cogload)
+
+#MAP range (FIXED EFFECTS)
+map_sig <- fitted(MOD, newdata=pred_list, summary=TRUE, re_formula = NA, dpar = "sigma") %>% 
+  cbind(pred_list) %>% 
+  mutate(range95 = Estimate*4)
+
+#MAP + Fixed effect MODEL ERROR 
+pop_range <- predict(MOD, newdata=pred_list, summary=TRUE, re_formula = NA, probs = c(twosd.l, twosd.u)) %>% 
+  cbind(pred_list) %>% 
+  mutate(range95 = Q97.75 - Q2.25)
+
+
+
+#MAP range for MAP FIXED + RANDOM
+
+samples <- as.data.frame(MOD[["fit"]]@sim[["samples"]][[1]])
+samples <- samples[1001:10000, ]
+parmeds <- sapply(samples, median)
+mymeds <- data.frame("parameters" = names(parmeds), "med" = parmeds)
+med_params <- mymeds %>% 
+  pivot_wider(names_from = "parameters",
+              values_from = "med")
+
+coef_dists <- predict_coeff_dist(med_params, 500) #coefficients.
+condition_dpars <- predict_condition_dpars(ttlc_onset, coef_dists) #dpars predicted from regmodel
+obs <- simulate_ttlctakeovers(condition_dpars, nobs = 50)
+raneff_range <- quantile_range(obs, c(twosd.l, twosd.u))
+
+
+dpars_fixed <- predict_condition_dpars_fixed(med_params, ttlc_onset)
+sig_fixed <- dpars_fixed[[2]] %>% 
+  mutate(range95 = sigma*4)
+sig_fixed$ttlc_onset <- as.numeric(sig_fixed$ttlc_onset)
+obs_fixed <- simulate_ttlctakeovers(dpars_fixed, nobs = 10000)
+fixeff_range <- quantile_range(obs_fixed, c(twosd.l, twosd.u))
+fixeff_range$ttlc_onset <- as.numeric(fixeff_range$ttlc_onset)
+
+
+print(quantile(rnorm(10000), twosd.l))
+
+
+#FULL PREDICTIVE (FIXED + RANDOM + UNCERTAINTY) 
+ppid <- seq(50,100)
+pred_list_new <- expand_grid(ttlc_onset, cogload, ppid)
+
+pp_range <- predict(MOD, newdata=pred_list_new, summary=FALSE, allow_new_levels = TRUE, probs = c(twosd.l, twosd.u), sample_new_levels = "gaussian", nsamples = 9000) %>% 
+  t() %>% 
+  cbind(pred_list_new) 
+  #mutate(range95 = Q97.75 - Q2.25)
+
+pp_quantiles <- pp_range %>% 
+   pivot_longer(matches("^[[:digit:]]+"),
+                 values_to = "ttlc_takeover") %>% 
+    group_by(ttlc_onset, cogload) %>% 
+    summarise(q1 = quantile(ttlc_takeover, twosd.l, na.rm = TRUE),
+              q2 = quantile(ttlc_takeover, twosd.u, na.rm = TRUE),
+              range95 = q2 - q1)
+
+print(mean(sig_fixed$range95 / pp_quantiles$range95))
+print(mean(raneff_range$range95 / pp_quantiles$range95))
+print(1- mean(raneff_range$range95 / pp_quantiles$range95))
+print(mean(raneff_range$range95 / pp_quantiles$range95) - mean(sig_fixed$range95 / pp_quantiles$range95))
+
+
+range_plot <- ggplot(pop_range, aes(x = ttlc_onset, y = range95, fill = cogload, col = cogload)) +
+  
+  geom_area(data = pop_range, alpha = .1) + #99%band
+  #geom_ribbon(data = pp_range, aes(ymin = 0, ymax = range95, fill = cogload, col = cogload), alpha = .1) + #50%
+  geom_area(data = pp_quantiles, alpha = .1) + #50%band
+  geom_area(data = sig_fixed, alpha = .1) + #50% band
+  geom_area(data = raneff_range, alpha = .1) +
+  
+  #geom_line(data = fixeff_range, aes(y = range95), col = "black") +
+  #geom_line(data = sig_fixed, aes(y = range95), col = "green") +
+  
+
+  #geom_ribbon(data = raneff_range_meds, aes(ymin = 0, ymax = range95, fill = cogload), col = "black", alpha = .1) +#50% band
+  #scale_color_manual(values = cogload_cols, guide = guide_legend(reverse = TRUE), labels = c('SupAuto+ACMT', 'SupAuto')) + 
+  #scale_fill_manual(values = cogload_cols) + guides(fill = FALSE) +
+  theme_classic() +
+  xlab(expression("TTLC"["Failure"]*" (s)")) + ylab(expression("95.5% Range (Two Sigma)"))+
+  facet_wrap(~cogload) +
+  coord_cartesian(xlim = c(0,13), ylim = c(0, 10)) +
+  ylab(parse(text = TeX('$\\pm 2\\sigma$'))) +
+    #round facet titles and place legend position
+  theme(panel.border = element_blank(), 
+       panel.background = element_blank(), 
+       panel.grid = element_blank(),
+       strip.background = element_blank(),
+       legend.position = c(0.3, 0.9),
+       legend.background = element_blank(),
+       legend.title = element_blank(),
+       legend.direction = ("horizontal")) 
+  
+  #coord_cartesian(ylim = c(-1,8), xlim = c(0,13)) 
+  #theme(legend.position = c(0.2, 0.8),
+   #     legend.title = element_blank())
+
+
+print(range_plot)
+
+ggsave("variability_stack.png", plot = range_plot, dev = "png", width = 18, height = 7, units = "cm", dpi = 300, type = "cairo")
+ggsave("variability_stack.svg", plot = range_plot, dev = "svg", width = 18, height = 7, units = "cm", dpi = 300)
+
 ```
 
 
@@ -1069,7 +1761,7 @@ right_col <- plot_grid(ttlcfixplot, clfixplot, corplot, nrow = 3, labels = c("B"
 full_grid <- plot_grid(mn_ribbon, right_col, ncol = 2, labels = c("A",""), label_size = 12, rel_widths = c(1,.75))
 print(full_grid)
 
-ggsave("population_coefficient_means_ttlc.png", plot = full_grid, dev = "png", width = 18, height = 10, units = "cm", dpi = 300, type = "cairo")
+ggsave("population_coefficient_means_ttlc.png", plot = full_grid, dev = "png", width = 18, height = , units = "cm", dpi = 300, type = "cairo")
 
 ```
 
@@ -1168,7 +1860,7 @@ ggsave("population_coefficient_newparticipants_ttlc.png", plot = full_grid, dev 
 ```
 
 ```{r, simulated and posterior mean distribution}
-#load('m9.gauss.rda')
+load('m9.gauss.rda')
 MOD <- m9.gauss
 
 
@@ -1179,6 +1871,8 @@ MOD <- m9.gauss
 n = 9000 #to mathc samples
 b = c("b_ttlc_onset","b_cogloadload")
 ps = posterior_samples(MOD, pars = b)
+
+full_vcov <- vcov(MOD)
 
 b_p = c("ttlc_onset","cogloadload")
 vcovar <- as.matrix(vcov(MOD, pars = b_p))
@@ -1233,10 +1927,10 @@ mode_hdi(post$cor_ppid__ttlc_onset__cogloadload)
 
 #mode_hdi(post$cor_ppid__sigma_ttlc_onset__sigma_cogloadload)
 #hist(post$cor_ppid__sigma_ttlc_onset__sigma_cogloadload)
-#preds <- post %>% 
-#  plyr::adply(., .margins = 1, .fun = mvpredict) %>% 
-#  select(V1, V2) %>% 
-#  rename(ttlc_onset = V1, cogloadload = V2)
+preds <- post %>% 
+  plyr::adply(., .margins = 1, .fun = mvpredict) %>% 
+  select(V1, V2) %>% 
+  rename(ttlc_onset = V1, cogloadload = V2)
   
 
 #seen participant mean coefficients.
@@ -1278,9 +1972,9 @@ predplot <- ggplot() +
                  level = .95) +
   
   #predicted distribution 95% ellipse including uncertainty
-  #stat_ellipse(data=preds, aes_string(x=b_p[1], y=b_p[2]), geom ="polygon", type = "norm",
-  #               size  = 0, alpha = .8, fill = "lightblue", col = NA, linetype = 2,
-  #               level = .95) +
+  stat_ellipse(data=preds, aes_string(x=b_p[1], y=b_p[2]), geom ="polygon", type = "norm",
+                 size  = 0, alpha = .8, fill = NA, col = "lightblue", linetype = 2,
+                 level = .95) +
   
   #fitted mean 95% ellipse
   stat_ellipse(data=post, aes_string(x=b[1], y=b[2]), geom ="polygon", type = "norm",
@@ -1319,7 +2013,7 @@ predplot <- ggplot() +
 
 print(predplot)
 
-ggsave("predictive_distribution_maineffects_ttlc.png", plot = predplot, dev = "png", width = 10, height = 10, units = "cm", dpi = 300, type = "cairo")
+#ggsave("predictive_distribution_maineffects_ttlc.png", plot = predplot, dev = "png", width = 10, height = 10, units = "cm", dpi = 300, type = "cairo")
 ```
 
 ```{r, hypotheticals}
@@ -1439,6 +2133,8 @@ ggplot(data = noloaddf, aes(x = ttlc_onset, y = pcross)) +
   xlab(expression("TTLC"["Failure"])) +
   coord_cartesian(xlim = c(.5, 10), ylim = c(0,.005)) 
   
+
+#the above is our MAP coefficent P cross. But to have the uncertainty intervals we need to simulate the pcross distribution for every row of the posterior samples.
   
 
 
@@ -1446,6 +2142,8 @@ ggplot(data = noloaddf, aes(x = ttlc_onset, y = pcross)) +
 ```
 
 ```{r, take2}
+
+#This attempt simulates a pcross for each row of the posterior sampels. A single row of the posterior samples is an estimate of the mean values of the coefficients, with the covariance baked in to it.
 
 library(bayestestR)
 post <- posterior_samples(MOD)
@@ -1459,18 +2157,18 @@ modelp <- Mode(samples$lp__)
 diff <- modelp -samples$lp__
 idx <- which.min(abs(diff))
 
-pars <- parnames(MOD)[1:24]
+pars <- parnames(MOD)[1:23]
 
 mymap <- sapply(samples, map_estimate)
 mymaps <- data.frame("parameters" = names(mymap), "MAP" = mymap)
-map_params <- samples[idx, ]
+map_params1 <- samples[idx, ]
 MAP <- map_estimate(MOD,  parameters = pars, effects = "all", component = "all")
 map_params <- mymaps %>% 
   pivot_wider(names_from = "parameters",
               values_from = "MAP")
 
 
-###### population means without random effects ##############
+###### population means without random effects (also without uncertainty) ##############
 
 map_mu_noload <- map_params$b_Intercept + map_params$b_ttlc_onset*ttlc_onset + 
   map_params$b_cogloadload*0 + map_params$b_sigma_ttlc_onset.cogloadload*(ttlc_onset*0)
@@ -1585,17 +2283,23 @@ sim_avg_pcross <- function(row, nsamples){
   return(pcross_avg)
 }
 
-pc_avg <- sim_avg_pcross(map_params, nsamples = 1000)
-pc <- pc_avg
+
 #sims = 1000
 #draws <- samples[sample(nrow(samples), sims, replace = FALSE), ]
 
+
+#below simulates the random effects with uncertainty by looping through all the posterioer estimates. These are truly predictive intervals but for our pcross.
 for (row in 1:nrow(samples)) {
   time <- Sys.time()
   print(row)
   simrow <- samples[row,]
-  p_c <- sim_avg_pcross(simrow, 1000)
+  row_dists <- predict_coeff_dist(simrow, 500) #coefficients.
+  row_dpars <- predict_condition_dpars(ttlc_onset, row_dists) #dpars predicted from regmodel
+  p_c <- avg_pcross(row_dpars)
   varname <- paste0("draw_",row)
+  if (row == 1){
+    pc <- p_c
+  }
   pc[[varname]] <- p_c$pcross
   print(Sys.time() - time)
 }
@@ -1605,6 +2309,8 @@ pc <- pc %>%
                names_to = "draw",
                values_to = "val")
 
+save(pc, file = 'pcross.rda')
+load('pcross.rda')
 
 onesd = .683
 onesd.l = .5 - (onesd/2)
