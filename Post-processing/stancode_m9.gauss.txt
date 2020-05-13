@@ -91,16 +91,19 @@ model {
     // add more terms to the linear predictor
     sigma[n] += r_2_sigma_1[J_2[n]] * Z_2_sigma_1[n] + r_2_sigma_2[J_2[n]] * Z_2_sigma_2[n] + r_2_sigma_3[J_2[n]] * Z_2_sigma_3[n];
   }
+  for (n in 1:N) {
+    // apply the inverse link function
+    sigma[n] = exp(sigma[n]);
+  }
   // priors including all constants
   target += student_t_lpdf(Intercept | 3, 2, 10);
-  target += cauchy_lpdf(b_sigma | 0,5);
-  target += cauchy_lpdf(Intercept_sigma | 0,5);
-  target += student_t_lpdf(sd_1 | 3, 0, 10)
-    - 4 * student_t_lccdf(0 | 3, 0, 10);
+  target += cauchy_lpdf(Intercept_sigma | 0,1);
+  target += cauchy_lpdf(sd_1 | 0,1)
+    - 4 * cauchy_lccdf(0 | 0,1);
   target += normal_lpdf(to_vector(z_1) | 0, 1);
   target += lkj_corr_cholesky_lpdf(L_1 | 1);
-  target += cauchy_lpdf(sd_2 | 0,5)
-    - 3 * cauchy_lccdf(0 | 0,5);
+  target += student_t_lpdf(sd_2 | 3, 0, 10)
+    - 3 * student_t_lccdf(0 | 3, 0, 10);
   target += normal_lpdf(to_vector(z_2) | 0, 1);
   target += lkj_corr_cholesky_lpdf(L_2 | 1);
   // likelihood including all constants
