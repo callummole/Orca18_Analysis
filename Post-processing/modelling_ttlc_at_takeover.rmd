@@ -626,7 +626,10 @@ plot(inter)
 
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> e8dd385d58aecc5f150cfe9e6c77a6e880b2f945
 ```{r, individual plot of predictive intervals}
 
 load('m9.gauss.rda')
