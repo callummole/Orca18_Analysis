@@ -1,6 +1,6 @@
 *csv
 *png
-!Post-Processing/Figures/*
+Post-Processing/Figures/*
 Materials/
 *.pyc
 Pilot/
