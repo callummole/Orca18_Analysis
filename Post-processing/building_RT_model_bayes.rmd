@@ -369,8 +369,8 @@ ggplot(data = filter(data_RTs, design == "balanced")) +
 #a model with Gamma(link = "identity") fails to initialise even with fixed effect models with an interaction term. Let's see if it's the most suitable family before investigating further
 
 
-m_weib_identity = brm(data = data_RTs, RT  ~ ttlc_calc, 
-            family = weibull(link = "identity")) #weibull distribution with identity link.
+m_weib_identity = brm(data = data_RTs, RT  ~ exp(ttlc_calc), 
+            family = weibull(link = "log")) #weibull distribution with identity link.
 
 m_gamma_identity = brm(data = data_RTs, RT  ~ ttlc_calc, 
             family = Gamma(link = "identity"))

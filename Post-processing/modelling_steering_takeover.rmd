@@ -1,0 +1,869 @@
+---
+title: 'Building a statistical model of reaction times to automation failures.'
+author: "Callum Mole"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document:
+    fig_caption: yes
+  word_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+This document steps through the statistical model building for takeover reaction times in a silent failure experiment, pre-reg can be found at https://osf.io/mydfw. We are primarily interested in how cognitive load affects reaction times at different levels of failure.
+
+First we load the data.
+
+```{r Load preliminaries, include=FALSE, warning=FALSE}
+
+library("tidyverse")
+library("brms")
+library("tidybayes")
+library("wesanderson")
+library("cowplot")
+library("zoo")
+
+```
+
+```{r, load data}
+
+
+setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+
+#load steergaze data
+
+
+#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
+#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
+steergazedata <- readRDS("../Data/Orca19_collated_steering.rds")  
+
+
+steergazedata <- steergazedata %>% 
+  rename(swv = swa) %>% 
+  mutate(swa = swv * 90)
+
+#mirror data
+steergazedata <- steergazedata %>% 
+  mutate(world_x_mirrored = if_else(bend == -1, world_x * -1, world_x),
+         swa_mirrored = if_else(bend == -1, swa * -1, swa),
+         swv_mirrored = if_else(bend == -1, swv * -1, swv),
+         sb_mirrored = if_else(bend == -1, steeringbias * -1, steeringbias))
+
+
+
+ttlc_from_offset <- function(b, w = 1.5, r = 60, v = 8){
+  b = b / 180 * pi
+  
+  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+}
+
+steergazedata <- steergazedata %>% 
+  mutate(ttlc_onset = ttlc_from_offset(sab))
+
+#add RT and disengage flag.
+disengage_RT <- function(onsettime, timestamp_trial, autoflag){
+  
+  #pick first frame where autoflag == false, then take the timestamp and minus the onset_time
+  auto_false <- which(autoflag == "FALSE")
+  disengage_index <- first(auto_false)
+  disengage_trialtime <- timestamp_trial[disengage_index]
+  onset_time <- first(onsettime)
+  RT <- disengage_trialtime - onset_time #can be negative
+  return(RT)
+  
+}
+
+#calculate RT
+steergazedata <- steergazedata  %>% 
+  group_by(ppid, sab, cogload, trialn) %>% 
+  mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
+         disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
+  )
+
+#create unique trial id
+steergazedata <- steergazedata %>% 
+  mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
+
+steergazedata$cogload <- as.factor(steergazedata$cogload)
+
+
+#rename cogload factors so that it ameks sense
+steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
+
+
+steergazedata <- steergazedata %>% 
+  ungroup() %>% 
+  mutate(ttlc_takeover = ttlc_onset - RT,
+        premature = ifelse(RT <= 0, 1, 0),
+        time_remaining = 15 - onsettime, 
+        early = time_remaining - RT,
+        ttlc_end_of_trial = ttlc_onset - time_remaining)
+
+
+```
+
+```{r plotting swa, echo=FALSE, message=FALSE, warning=FALSE, fig.width=15,fig.height=8,fig.cap="Fig 9. swa for cogload within different failure types. The dashed line is the point of takeover"}
+
+
+#pick up .5 s before trial takeover so you can see how quickly swa moves after takeover.
+
+delay = 1
+steergaze_manual_delay <- steergazedata %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + onsettime - delay))
+
+### Reset trial so they all start at around [0,0] 
+steergaze_manual_delay <- steergaze_manual_delay %>% 
+  ungroup() %>% 
+  group_by(trialid) %>%
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+#plot steering bias
+p_swa <- ggplot(data = filter(steergaze_manual_delay, f < 360), aes(x = timestamp_zero - delay, y= swa_mirrored)) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  theme_classic() +
+  ylim(c(-45,90)) +
+  xlab("Time (s)") + ylab("Steering Wheel Angle (degrees)") +
+  geom_vline(xintercept = 0, col = "black", linetype = "dashed")
+  
+show(p_swa)
+
+#plot steering bias
+p_sb <- ggplot(data = filter(steergaze_manual_delay, f < 360), aes(x = timestamp_zero - delay, y= sb_mirrored)) +
+  geom_path(aes(group = trialid), alpha = .1) +
+  theme_classic() +
+  ylim(c(-2,2)) +
+  xlab("Time (s)") + ylab("Steering Bias") +
+  geom_vline(xintercept = 0, col = "black", linetype = "dashed")
+  
+show(p_sb)
+
+
+```
+
+```{r data from takeover, echo=FALSE, message=FALSE, warning=FALSE}
+
+#motor_delay = .25 - for SWA max the motor delay doesn't matter.
+motor_delay = 0
+
+data_fromtakeover <- steergazedata %>% 
+  ungroup() %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + onsettime - motor_delay)) %>% 
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+fromtakeover_nodelay <- steergazedata %>%
+  ungroup() %>% 
+  filter(design == "balanced", ppid != 13,
+         premature == 0, disengaged == 1) %>% 
+  group_by(trialid) %>% 
+  filter(timestamp_trial > (RT + onsettime)) %>% 
+  mutate(timestamp_zero = timestamp_trial - timestamp_trial[1],
+         f = seq(1:n()))
+
+```
+
+```{r, plotting data_fromtakeover}
+
+exitters <- fromtakeover_nodelay %>% 
+  filter(sb_mirrored < -1.5) %>% 
+  select(trialid) %>% 
+  unique(.)
+
+roll_lines <- fromtakeover_nodelay %>% 
+  ungroup() %>% 
+  group_by(cogload, ttlc_onset, f) %>% 
+  summarise(medsb = median(sb_mirrored),
+            medswa = median(swa_mirrored)) %>% 
+  mutate(roll_sb = rollapply(medsb, 15, mean, align = "left", partial = TRUE),
+         roll_swa = rollapply(medswa, 15, mean, align = "left", partial = TRUE)) #.1s rolling average
+    
+
+cogload_cols = c("#e3372b","#2bd7e3")
+
+p_lpos <- ggplot(fromtakeover_nodelay, aes(x = f / 60, y = sb_mirrored, group = trialid, col = cogload)) +
+  geom_line(alpha = .05) +
+  coord_cartesian(xlim = c(0, 3), ylim = c(-2,2)) +
+  geom_hline(yintercept=  c(-1.5, 1.5), linetype = "dashed", color = "grey60") +
+  
+  geom_line(data = roll_lines, aes(x = f / 60, y = roll_sb, group = cogload), size = 1) +
+  
+  
+  scale_color_manual(values = cogload_cols) + #scale_fill_manual(values = rev(cogload_cols)) + guides(fill = FALSE) +
+  
+  #facet laps, change facet border, and place legend
+  ylab("Steering Bias (m)") + xlab("Time from Takeover (s)") +
+  theme_classic() +
+  facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)paste0((round(as.double(x),2)), " s"))) +
+  theme(panel.border = element_blank(), 
+       panel.background = element_blank(), 
+       panel.grid = element_blank(),
+       strip.background = element_blank(),
+       legend.position = c(0.65, 0.86),
+       legend.title = element_blank(),
+       legend.direction = "horizontal",
+       legend.background = element_blank()) 
+  
+print(p_lpos)
+
+p_swa <- ggplot(fromtakeover_nodelay, aes(x = f / 60, y = swa_mirrored, group = trialid, col = cogload)) +
+  geom_line(alpha = .05) +
+  coord_cartesian(xlim = c(0, 3)) +
+  
+  geom_line(data = roll_lines, aes(x = f / 60, y = roll_swa, group = cogload), size = 1) +
+  
+  
+  scale_color_manual(values = cogload_cols) + #scale_fill_manual(values = rev(cogload_cols)) + guides(fill = FALSE) +
+  
+  #facet laps, change facet border, and place legend
+  ylab(expression("Steering Wheel Angle "*degree)) + xlab("Time from Takeover (s)") +
+  theme_classic() +
+  facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)paste0((round(as.double(x),2)), " s"))) +
+  theme(panel.border = element_blank(), 
+       panel.background = element_blank(), 
+       panel.grid = element_blank(),
+       strip.background = element_blank(),
+       legend.position = c(0.35, 0.35),
+       legend.title = element_blank(),
+       legend.direction = "horizontal",
+       legend.background = element_blank()) 
+  
+print(p_swa)
+
+measures_grid <- plot_grid(p_lpos, p_swa, ncol = 2, labels = c("A","B"), label_size = 12)
+
+
+ggsave("steering_measures_plt.png", plot = measures_grid, dev = "png", width = 18, height = 10, units = "cm", dpi = 300, type = "cairo")
+
+
+```
+
+
+
+
+```{r plotting steering metrics, echo=FALSE, message=FALSE, warning=FALSE}
+
+swa_max_uncentred <- function(swa, swa_to){
+  #returns max angle that is the top of the swa turn range
+  centred = swa - swa_to
+  i = which.max(abs(centred))
+  return(swa[i])
+}
+
+lim_range <- function(swa_uc, swa_to){
+  #returns max angle capped at relevant limit
+  diff = swa_uc - swa_to
+  direc = sign(diff)
+  lim = 90*direc
+  return(abs(lim - swa_to))
+}
+
+frames = 90
+
+data_sb <- data_fromtakeover %>% 
+  group_by(trialid) %>% 
+  filter(disengaged == 1, premature == 0, ppid != 13) %>% 
+  summarise(SDLP = sd(steeringbias),
+            sw_var = sd(swa),
+            sab = first(sab),
+            ttlc_takeover = first(ttlc_takeover),
+            cogload = first(cogload),
+            sb_mn = mean(sb_mirrored),
+            rms = sqrt(mean((sb_mirrored^2))),
+            ppid = first(ppid),
+            design = first(design),
+            swa_to = first(swa_mirrored),
+            swa_max_uc = swa_max_uncentred(swa_mirrored[1:frames], swa_to),
+            swa_lim = lim_range(swa_max_uc, swa_to),
+            swa_max = max(abs(swa_mirrored[1:frames]-swa_to)),
+            dmax = max(abs(diff(swa_mirrored[1:frames]))),
+            noinput = ifelse(dmax == 0, 1, 0),
+            RT = first(RT))
+
+#plot limits
+ggplot(data = data_sb, aes(x = swa_max, y = swa_lim)) + geom_point(alpha = .2) +
+  geom_abline(slope = 1, intercept = 0)
+
+ggplot(data = data_sb, aes(y = swa_max_uc, x = swa_to)) + geom_point(alpha = .2) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_hline(yintercept = c(-90,90))
+  
+
+noinput <- filter(data_sb, noinput == 1)
+trials <- noinput$trialid
+
+ggplot(filter(steergazedata, trialid %in% trials), aes(x = timestamp_trial, y = swa, col = trialid)) +
+  geom_line(alpha = .3) +
+  geom_vline(aes(xintercept = onsettime, col = trialid), alpha = .3)
+
+ggplot(filter(steergazedata), aes(x = timestamp_trial, y = swa, group = trialid)) +
+  geom_line(alpha = .3) +
+  facet_wrap(~ppid) + ggsave("swa_trace.png")
+
+  diff_signals <- data_fromtakeover %>% 
+  group_by(trialid) %>% 
+  mutate(dswa = prepend(diff(swa_mirrored),0))
+            
+head(diff_signals)
+
+ggplot(diff_signals, aes(x = f, y = dswa, group = trialid)) +
+  geom_line(alpha = .1) + xlim(0,30)
+
+#also we could use dmax from ty's paper?
+
+ggplot(data_sb, aes(x = swa_max)) + geom_histogram()
+ggplot(data_sb, aes(x = dmax)) + geom_histogram()
+ggplot(data_sb, aes(x = log(dmax))) + geom_histogram()
+ggplot(data_sb, aes(x = sw_var)) + geom_histogram()
+ggplot(data_sb, aes(x = SDLP)) + geom_histogram() +xlim(0,1)
+
+#colnames(data_fromtakeover)
+
+#min(data_sb$SDLP)
+
+ggplot(data_sb, aes(x = SDLP, group = cogload, fill = cogload)) + geom_histogram(binwidth = .01, alpha = .5, position = "identity") + xlim(0,1)
+
+ggplot(filter(data_sb, design == "balanced"), aes(x = SDLP, group = cogload, fill = cogload)) + geom_histogram(binwidth = .1, alpha = .5, position = "identity") + xlim(0,1) +
+  facet_wrap(~ppid)
+
+ggplot(data_sb, aes(x = sw_var, group = cogload, fill = cogload)) + geom_histogram(binwidth = .5, alpha = .5, position = "identity") 
+ggplot(data_sb, aes(x = sw_var, group = cogload, col = cogload)) + geom_density()
+ggplot(data_sb, aes(x = ttlc_takeover, y = swa_max)) + geom_point(alpha = .1)
+ggplot(data_sb, aes(x = log(ttlc_takeover), y = log(swa_max), col = cogload)) + geom_point(alpha = .1)
+ggplot(data_sb, aes(x = ttlc_takeover, y = swa_max, col = cogload)) + geom_point(alpha = .1)
+ggplot(data_sb, aes(x = 1/ttlc_takeover, y = swa_max)) + geom_point(alpha = .1) + xlim(0,10)
+ggplot(data_sb, aes(x = 1/(ttlc_takeover), y = dmax)) + geom_point(alpha = .1) + xlim(0,5)
+#ggplot(data_sb, aes(x = log(inv_ttake), y = log(dmax))) + geom_point(alpha = .1) #+ xlim(0,5)
+
+ggplot(data_sb, aes(x = 1/(ttlc_takeover), y = dmax)) + geom_point(alpha = .1) + xlim(0,5)# + facet_wrap(~ppid)
+
+ggplot(data_sb, aes(x = 1/(ttlc_takeover), y = dmax)) + geom_point(alpha = .1) + xlim(0,5)# + facet_wrap(~ppid)
+#sdlp and sw_var both seem to show reduced magnitude slightly with load.
+
+ggplot(data = data_sb, aes(x = swa_max, y= dmax)) + geom_point(alpha = .1)
+
+ggplot(data = data_sb, aes(x = swa_max, y = ttlc_takeover, col = RT)) + geom_point(alpha = .2)
+
+cor_table <- data_sb %>% 
+  ungroup() %>% 
+  summarise(dmax_r = cor.test(swa_max, dmax, method = "pearson")$estimate,
+            dmax_p = cor.test(swa_max, dmax, method = "pearson")$p.value,
+            swa_var_r = cor.test(swa_max, sw_var, method = "pearson")$estimate,
+            swa_var_p = cor.test(swa_max, sw_var, method = "pearson")$p.value,
+            SDLP_r = cor.test(swa_max, SDLP, method = "pearson")$estimate,
+            SDLP_p = cor.test(swa_max, SDLP, method = "pearson")$p.value,
+            rms_r = cor.test(swa_max, rms, method = "pearson")$estimate,
+            rms_p = cor.test(swa_max, rms, method = "pearson")$p.value,
+            RT_r = cor.test(swa_max, RT, method = "pearson")$estimate,
+            RT_p = cor.test(swa_max, RT, method = "pearson")$p.value,
+            sb_RT_r = cor.test(sb_mn, RT, method = "pearson")$estimate,
+            sb_RT_p = cor.test(sb_mn, RT, method = "pearson")$p.value)
+
+
+
+#What are we interested in here? Are we interested in the trade-off? I haven't even begun on the cognitive task performance...
+
+?cor.test
+
+
+```
+
+
+```{r, fit simple distribution}
+
+sapply(data_sb, class)
+
+save_stancode <- function(form, dat, fam, priors = NA, mod = ""){
+  if (is.na(priors)){
+    sc <- make_stancode(form, dat, fam)  
+  } else{
+    sc <- make_stancode(form, dat, fam, priors)  
+  }
+  
+  fn <- paste("stancode_",mod,".txt",sep="")
+  filecon <- file(fn)
+  writeLines(sc, filecon)
+  close(filecon)
+}
+
+#nl_bf_sig2 <- bf(log_RT ~ log((b1 * ttlc_calc) + (b2 * cogload)),  sigma ~ 1 + ttlc_calc + cogload,
+#            b1 ~1, b2 ~ 1, nl = TRUE)
+
+#prior2 = c(prior(normal(0, 4), nlpar = "b1"),
+#    prior(normal(0, 4), nlpar = "b2"))
+
+#nl1_sig2 = brm(data = only_responses, formula = nl_bf_sig2, prior = prior2, family = gaussian())
+data_sb <- mutate(data_sb, inv_ttake = 1/ttlc_takeover,
+                  log_dmax = log(dmax))
+
+data_sb <- mutate(data_sb, log_swamax = log(swa_max), log_ttake = log(ttlc_takeover))
+
+tofit <- filter(data_sb, ttlc_takeover > 0)
+
+nl1 <- bf(log_swamax ~ log((b1 * ttlc_takeover) ), b1 ~ 1, nl=TRUE)
+prior1 = c(prior(normal(0, 4), nlpar = "b1"))
+inits <- list(list(b_b1 = array(1, dim = 1))) #list must be size of the number of
+
+nl1.md <- brm(data = tofit, formula = nl1, prior = prior1, family = student(), inits = inits,
+               iter = 4000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+fam <- brmsfamily("gaussian", link = "identity")
+print(fam)
+save_stancode(nl1, data_sb, fam, priors = prior1, mod = "nl1.mod")
+
+summary(nl1.md)
+pp_check(nl1.md)
+
+
+nl2 <- bf(log_swamax ~ log((b1 * ttlc_takeover) + (b2 * cogload) ), b1 ~ 1, b2 ~ 1, nl=TRUE)
+prior2 = c(prior(normal(0, 4), nlpar = "b1"),
+           prior(normal(0, 4), nlpar = "b2"))
+inits <- list(list(b_b1 = array(1, dim = 1)) ) #list must be size of the number of
+
+nl2.md <- brm(data = tofit, formula = nl2, prior = prior2, family = gaussian(), inits = inits,
+               iter = 4000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+summary(nl2.md)
+pp_check(nl2.md)
+
+
+nl3 <- bf(log_swamax ~ log( b0 + (b1 * ttlc_takeover) + (b2 * cogload) ), b1 ~ 1 + (1 | ppid), b2 ~ 1 + (1 | ppid), b0 ~ 1 + (1 | ppid), nl=TRUE)
+prior3 = c(prior(normal(0, 4), nlpar = "b1"),
+           prior(normal(0, 4), nlpar = "b2"),
+           prior(normal(0, 4), nlpar = "b0"))
+inits <- list(list(b_b1 = array(1, dim = 1)) ) #list must be size of the number of
+
+nl3.md <- brm(data = tofit, formula = nl3, prior = prior3, family = gaussian(), inits = inits,
+               iter = 4000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+summary(nl3.md)
+pp_check(nl3.md)
+
+loo(nl3.md, nl2.md, nl1.md)
+
+
+
+form <- bf(log_swamax ~ log_ttake + cogload)
+m1 <-brm(data = tofit, formula = form, family = gaussian(),
+               iter = 4000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+summary(m1)
+pp_check(m1, type = "dens_overlay")
+
+marginal_effects(m1)
+
+form2 <- bf(log_swamax ~ log_ttake + cogload + (1 + log_ttake + cogload | ppid))
+
+m2 <-brm(data = tofit, formula = form2, family = gaussian(),
+               iter = 4000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+
+summary(m2)
+pp_check(m2)
+marginal_effects(m2)
+
+
+form3 <- bf(log_swamax ~ log(ttlc_onset) * cogload + (1 + log(ttlc_onset) * cogload | ppid))
+
+get_prior(form3, tofit, family=gaussian())
+myprior = c(set_prior("cauchy(0,1)", class="sd", dpar = "Intercept"),
+            set_prior("cauchy(0,5)", class="Intercept", dpar = "sigma"),
+            set_prior("cauchy(0,5)", class="sd", dpar = "sigma"))
+            
+
+tofit$cogload <- relevel(tofit$cogload, "noload")
+m3 <-brm(data = tofit, formula = form3, family = gaussian(),
+               iter = 4000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+
+summary(m3)
+pp_check(m3)
+marginal_effects(m3)
+
+#todo - censored distribution.
+
+
+```
+```{r}
+
+onesd = .683
+onesd.l = .5 - (onesd/2)
+onesd.u = .5 + (onesd/2)
+twosd = .955
+twosd.l = .5 - (twosd/2)
+twosd.u = .5 + (twosd/2)
+
+
+ttlc_take <- seq(.1, to = 13, by = .1)
+log_ttake <- log(ttlc_take)
+cogload <- c("noload")
+pred_list <- expand_grid(log_ttake, cogload)
+preds <- predict(m3, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
+  cbind(pred_list) %>%
+  group_by(log_ttake, cogload) %>% 
+  mutate(Estimate = mean(Estimate),
+         Q2.25 = min(Q2.25),
+         Q15.85 = min(Q15.85),
+         Q84.15 = min(Q84.15),
+         Q97.75 = max(Q97.75))
+
+
+
+#plot no load for paper.
+p_raw_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = ttlc_takeover, y = swa_max)) +
+  
+  
+  geom_ribbon(data = preds, aes(x = exp(log_ttake), ymin = exp(Q2.25), ymax = exp(Q97.75)), fill = pred_col, col = NA, alpha = .1, inherit.aes = F) + #99% band
+  geom_ribbon(data = preds, aes(x = exp(log_ttake), ymin = exp(Q15.85), ymax = exp(Q84.15)), fill = pred_col, alpha = .3, inherit.aes = F) + #50% band
+  geom_line(data = preds, aes(x = exp(log_ttake), y = exp(Estimate)), col = pred_col, size = 2, inherit.aes = F, alpha = 1) + #mean 
+  
+  geom_point(alpha = .25) +
+  xlab(expression("TTLC"["Takeover"]*" (s)")) + ylab(expression("SWA"["Max"]*" "*degree)) +
+  theme_classic() +
+
+
+  coord_cartesian(xlim = c(0,8), ylim = c(0,90))
+  
+print(p_raw_max)
+
+
+p_log_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = log(ttlc_takeover), y = log(swa_max))) +
+  
+  geom_ribbon(data = preds, aes(x = log_ttake, ymin = Q2.25, ymax = Q97.75), fill = pred_col, col = NA, alpha = .1, inherit.aes = F) + #99% band
+  geom_ribbon(data = preds, aes(x = log_ttake, ymin = Q15.85, ymax = Q84.15), fill = pred_col, alpha = .3, inherit.aes = F) + #50% band
+  geom_line(data = preds, aes(x = log_ttake, y = Estimate), col = pred_col, size = 2, inherit.aes = F, alpha = 1) + #mean 
+  
+  geom_point(alpha = .25) +
+  xlab(expression("Log(TTLC"["Takeover"]*") (s)")) + ylab(expression("Log(SWA"["Max"]*") "*degree)) +
+  
+  
+  
+  
+  theme_classic() +
+  coord_cartesian(xlim = c(-2, 2.2), ylim = c(-1, 4.5))
+
+print(p_log_max)
+
+
+
+
+
+swamax_grid <- plot_grid(p_raw_max, p_log_max, ncol = 2, labels = c("A","B"), label_size = 12)
+
+
+
+
+
+ggsave("swa_max.png", plot = swamax_grid, dev = "png", width = 18, height = 6, units = "cm", dpi = 300, type = "cairo")
+
+
+```
+
+
+
+
+```{r, individual plot of expected values}
+
+
+onesd = .683
+onesd.l = .5 - (onesd/2)
+onesd.u = .5 + (onesd/2)
+twosd = .955
+twosd.l = .5 - (twosd/2)
+twosd.u = .5 + (twosd/2)
+
+
+
+ttlc_take <- seq(.1, to = 13, by = .1)
+log_ttake <- log(ttlc_take)
+#ppid <- c(1:12, 14:20)
+cogload <- c("noload","load")
+pred_list <- expand_grid(log_ttake, cogload)
+preds <- predict(m3, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
+  cbind(pred_list) %>%
+  group_by(log_ttake, cogload) %>% 
+  mutate(Estimate = mean(Estimate),
+         Q2.25 = min(Q2.25),
+         Q15.85 = min(Q15.85),
+         Q84.15 = min(Q84.15),
+         Q97.75 = max(Q97.75))
+  
+
+
+  
+  
+loglog <- ggplot(preds, aes(x = log_ttake, group = cogload, col = cogload)) +
+  
+  geom_ribbon(aes(ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1) + #99% band
+  geom_ribbon(aes(ymin = Q15.85, ymax = Q84.15, fill = cogload), col = NA, alpha = .3) + #50% band  
+
+  geom_line(aes(y = Estimate, col = cogload), size = 1) +  #mean
+  theme_classic() +
+  scale_color_manual(values = cogload_cols) +scale_fill_manual(values = cogload_cols, guide = F)+
+  theme(legend.position = c(0.9, .9),
+        legend.title = element_blank(),
+        legend.background = element_blank()) +
+  xlab(expression("Log(TTLC"["Takeover"]*") (s)")) + ylab(expression("Log(SWA"["Max"]*") "*degree)) +
+  
+  coord_cartesian(xlim = c(-2, 2.2), ylim = c(-1, 4.5))
+  
+print(loglog)
+  
+raw_inset <- ggplot(preds, aes(x = exp(log_ttake), group = cogload, col = cogload)) +
+  theme_classic() +
+  geom_ribbon(aes(ymin = exp(Q2.25), ymax = exp(Q97.75), fill = cogload), col = NA, alpha = .1) + #99% band
+  geom_ribbon(aes(ymin = exp(Q15.85), ymax = exp(Q84.15), fill = cogload), col = NA, alpha = .3) + #50% band  
+
+  geom_line(aes(y = exp(Estimate), col = cogload), size = 1) +  #mean
+  scale_color_manual(values = cogload_cols, guide = F) +scale_fill_manual(values = cogload_cols, guide = F)+
+  coord_cartesian(xlim = c(0,5), ylim = c(0,90)) +
+  scale_x_continuous(breaks = c(0,5))+
+  scale_y_continuous(breaks = c(0,90))+
+  theme(axis.text=element_text(size = 6), axis.ticks = element_blank(),
+       panel.border = element_rect(colour = "black", fill=NA, size=.5),
+        axis.title = element_text(size = 8),
+       legend.background = element_blank(),
+       panel.background = element_blank(),
+       plot.background = element_rect(fill = "transparent",colour = NA)) +
+  
+  xlab(expression("TTLC"["Takeover"])) + ylab(expression("SWA"["Max"]*degree)) 
+
+print(raw_inset)  
+print(mn_ribbon)
+
+plot.with.inset <-
+  ggdraw() +
+  draw_plot(loglog) +
+  draw_plot(raw_inset, x = 0.125, y = .2, width = .4, height = .45)
+
+print(plot.with.inset)
+#TODO: finish off plot.
+
+ggsave("swa_max_fixed_prediction.png", plot = mn_ribbon, dev = "png", width = 18, height = 10, units = "cm", dpi = 300, type = "cairo")
+
+pars = c("b_log_ttake", "b_cogloadload", "b_log_take:cogloadload")
+draws_coef <- m3 %>% 
+  posterior_samples(., pars = pars) %>% 
+  gather(key = "b", value = "estimate") %>% 
+  group_by(b) %>% 
+  mode_hdi() %>% 
+  mutate(b = fct_relevel(b, "b_log_ttake", "b_cogloadload", "b_log_take:cogloadload"))
+
+
+
+breaks = c("b_tt","b_cl", "b_tt:cl")
+forest <- ggplot() +
+  geom_pointintervalh(data = draws_coef,aes(y = reorder(b, desc(b)), x = estimate, xmin = .lower, xmax = .upper), col = "black", fatten_point = .5) +
+  theme_classic() +
+  geom_vline(xintercept = 0, linetype= "dashed", col = "grey80") +
+   scale_y_discrete(labels = rev(breaks))+
+  ylab("Coefficients")
+  
+  
+print(forest)
+
+
+effects_grid <- plot_grid(plot.with.inset, forest, ncol = 2, labels = c("A","B"), label_size = 12, rel_widths = c(1.75,1))
+ggsave("swa_effects.png", plot = effects_grid, dev = "png", width = 18, height = 8, units = "cm", dpi = 300, type = "cairo")
+
+```
+
+```{r, population expected values}
+
+b = c("b_log_ttake","b_cogloadload")
+b_p = c("log_ttake","cogloadload")
+
+post <- posterior_samples(m3)
+mode_hdi(post$cor_ppid__log_ttake__cogloadload)
+mode_hdi(post$b_cogloadload)
+mode_hdi(post$b_log_ttake)
+  
+#seen participant mean coefficients.
+pp_coef <- as.data.frame(coef(m3)$ppid[, 1, 2:3]) #ttlc and cogload combined coefs estimate
+
+hdis <- lapply(b, function(x) {mean_hdi(post[[x]], .width = .95)}) 
+
+#mean predictive distribution
+#MAP predictive distribution
+modes <- post %>% 
+  select(b_log_ttake, b_cogloadload, sd_ppid__log_ttake, sd_ppid__cogloadload, cor_ppid__log_ttake__cogloadload) %>% 
+  sapply(.,Mode)
+
+
+covar = modes["sd_ppid__log_ttake"] * modes["sd_ppid__cogloadload"] * modes["cor_ppid__log_ttake__cogloadload"]
+cov_mat = matrix(c(modes["sd_ppid__log_ttake"]^2, covar, 
+                   covar, modes["sd_ppid__cogloadload"]^2), ncol = 2)  
+
+dist <- as.data.frame(MASS::mvrnorm(9000, c(modes["b_log_ttake"], modes["b_cogloadload"]), cov_mat))
+
+
+diff = 1
+ylims = c(.4-diff,.4)
+xlims = c(-1.3, -1.3 +diff)
+margin = .01
+xseg = xlims[1]+margin
+yseg = ylims[1]+margin
+
+predplot <- ggplot() +
+  #geom_point(data=as.data.frame(dist), aes_string(x=b_p[1], y=b_p[2]), alpha = .1, col = "blue") +
+  #geom_point(data=preds, aes_string(x=b_p[1], y=b_p[2]), alpha = .3, col = "lightblue") +
+  #geom_point(data=dist, aes_string(x=b[1], y=b[2]), alpha = .3, col = "lightblue") +
+  #geom_point(data=ps, aes_string(x=b[1], y=b[2]), alpha = .05, col = "dodgerblue3") +
+
+  
+  #predicted distribution 95% ellipse excluding uncertainty
+  stat_ellipse(data=dist, aes_string(x=b[1], y=b[2]), geom ="polygon", type = "norm",
+                 size  = .5, alpha = .8, fill = NA, col = "grey40", linetype = 1,
+                 level = .95) +
+  
+  #predicted distribution 95% ellipse including uncertainty
+  #stat_ellipse(data=preds, aes_string(x=b_p[1], y=b_p[2]), geom ="polygon", type = "norm",
+  #               size  = 0, alpha = .8, fill = "lightblue", col = NA, linetype = 2,
+  #               level = .95) +
+  
+  #fitted mean 95% ellipse
+  stat_ellipse(data=post, aes_string(x=b[1], y=b[2]), geom ="polygon", type = "norm",
+                 size  = .5, alpha = .8, fill = NA, col = "black", linetype = 3,
+                 level = .95) +
+  
+  
+  #hdis
+  #geom_point(data = hdis[[1]], aes(y = yseg, x = y), size = 2, col = "black") + 
+  #geom_segment(data = hdis[[1]], aes(y = yseg, x = ymin, yend = yseg, xend = ymax), size = 1, col = "black") +
+  #geom_point(data = hdis[[2]], aes(y = y, x = xseg), size = 2, col = "black") + 
+  #geom_segment(data = hdis[[2]], aes(y = ymin, x = xseg, yend = ymax, xend = xseg), size = 1, col = "black") +
+  
+  theme_classic() + 
+ # geom_vline(xintercept=0, linetype="dashed", col = "grey40") +
+  geom_hline(yintercept=0, linetype="dashed", col = "grey40") +
+  
+  #add participant mean effects
+  geom_point(data = pp_coef, aes_string(x=b_p[1], y=b_p[2]), alpha = 1, col = "black") +
+  
+  coord_fixed(ratio = 1, ylim = ylims, xlim = xlims) +
+  
+  xlab(expression(paste(beta, " TTLC"["Takeover"]))) +
+  ylab(expression(paste(beta, " Cogload"))) +
+  
+  
+  #custom legends
+  annotate("path", x=-.65+.01*cos(seq(0,2*pi,length.out=100)), y=.3+.01*sin(seq(0,2*pi,length.out=100)), hjust =0, vjust = 0) +
+  annotate("text", x=-.63, y=.3, label = "MAP 95% Predictive \nDistribution", size = 2.5, hjust =0, vjust = 1) +
+  annotate("path", x=-.65+.01*cos(seq(0,2*pi,length.out=100)), y=.33+.01*sin(seq(0,2*pi,length.out=100)), linetype = 3, hjust =0, vjust = 0) +
+  annotate("text", x=-.63, y=.32, label = "Mean Estimate 95% CI", size = 2.5, hjust = 0, vjust = 0) 
+  #annotate("path", x=c(-.34,-.36), y=-.75, hjust =0, vjust = 0) +
+  #annotate("text", x=-.37, y=-.75, label = "Marginal 95% HDI", size = 2.5, hjust = 0, vjust = 0) 
+ 
+#+ xlab("ttlc takeover increase with ttlc onset (s)") + ylab("") + remove_yticks
+
+print(predplot)
+
+ggsave("predictive_distribution_maineffects_swamax.png", plot = predplot, dev = "png", width = 10, height = 10, units = "cm", dpi = 300, type = "cairo")
+```
+
+
+```{r, marginal contrast of cogload}
+
+
+ggplot(data_sb, aes(x = log(ttlc_takeover), y = log(swa_max), col = cogload)) +
+  geom_point(alpha = .2) +
+  facet_wrap(~ppid)
+
+#need smooth curves for comparison
+p19 <- filter(data_sb, ppid = 19)
+
+
+
+meds <- data_sb %>% 
+  ungroup() %>% 
+  mutate(ttake_round = round(ttlc_takeover, digits = 1)) %>% 
+  group_by(ppid, cogload, ttake_round) %>% 
+  summarise(med = median(swa_max))
+
+meds <- meds %>% 
+  group_by(ppid, ttake_round) %>% 
+  summarise(diff = ifelse(length(med)==2, med[2]-med[1],NA))
+
+ttlc_take <- seq(.1, to = 13, by = .1)
+log_ttake <- log(ttlc_take)
+#ppid <- c(1:12, 14:20)
+cogload <- c("noload","load")
+pred_list <- expand_grid(log_ttake, cogload)
+preds <- fitted(m3, newdata=pred_list, summary=TRUE, re_formula = NA) %>% 
+  cbind(pred_list) 
+
+
+preds <- preds %>% 
+  group_by(log_ttake) %>% 
+  summarise(ct = exp(Estimate[2]) - exp(Estimate[1]))
+
+ggplot(preds, aes(x = exp(log_ttake), y = ct)) +
+  geom_line() 
+  #geom_point(data = meds, aes(x = ttake_round, y = diff), col = "blue", alpha = .2)
+  
+  #ggsave('cogloadcontrast.png', dev = "png", width = 8.9, height = 8, units = "cm", dpi = 300, type = "cairo")
+
+
+a <- seq(.1, 10, by = .1)
+loga <- log(a)
+ba <- seq(-2,2,by = .25)
+c <- sapply(ba, FUN = function(x) a^x) %>% 
+  as.data.frame()
+
+
+  
+colnames(c) <- ba
+d<-gather(c, key = "coef", value = "pred")
+d$a <- a
+
+ggplot(d, aes(y = pred, x = a, col = reorder(coef, desc(coef)), group = coef)) +
+  geom_line() + theme_minimal() +
+  coord_cartesian(xlim = c(0,5), ylim = c(0,30)) 
+  
+  
+
+
+```
+
+
+```{r, forest plots for each models cogload ranef}
+
+load('m9.gauss.rda')
+
+
+parnames(m9.gauss)
+
+draws_ttlc <- m9.gauss %>% 
+  spread_draws(r_ppid[ppid, b]) %>% 
+  filter(b == "cogloadnoload") %>% 
+  group_by(ppid) %>% 
+  median_qi(r_ppid)
+
+head(draws_ttlc)
+
+parnames(m3)
+
+draws_swa <- m3 %>% 
+  spread_draws(r_ppid[ppid, b]) %>% 
+  filter(b == "cogloadnoload") %>% 
+  group_by(ppid) %>% 
+  median_qi(r_ppid)
+
+
+ggplot() +
+  geom_pointintervalh(data = draws_ttlc,aes(y = ppid, x = r_ppid, xmin = .lower, xmax = .upper), col = "black") +
+  geom_pointintervalh(data = draws_swa,aes(y = ppid, x = r_ppid, xmin = .lower, xmax = .upper), 
+                      position =position_nudge(y = -0.3), col = "grey40") + theme_classic() +
+  xlim(-.4,.4) + geom_vline(xintercept = 0, linetype= "dashed", col = "grey80")
+
+
+
+```
+
