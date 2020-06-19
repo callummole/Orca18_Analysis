@@ -1,7 +1,0 @@
-,ppid,targetoccurence,targetnumber,trialn,EoTScore1,TargetCount1,EoTScore2,TargetCount2,EoTScore3,TargetCount3
-0,P01,0.4,1,0,3.0,2,,,,
-1,P01,0.4,1,1,1.0,1,,,,
-2,P01,0.4,1,2,5.0,5,,,,
-3,P01,0.4,3,3,1.0,1,2.0,2,0,0
-4,P01,0.4,3,4,2.0,1,1.0,1,1.0,1
-5,P01,0.4,3,5,1.0,1,2.0,2,1.0,1
