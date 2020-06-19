@@ -11,14 +11,14 @@ if __name__ == '__main__':
     #rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
     #rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
     #rootdir = "C:/git_repos/Orca18_Analysis/Data"
-    rootdir = "E:/Orca19_FullSteeringDataset"
-    output_filename = 'Orca19_collated_steering.csv'
+    rootdir = "D:/Orca19_FullSteeringDataset"
+    output_filename = 'Orca19_collated_steering2.csv'
 
     
 
     master_stitch = pd.DataFrame() #master data for gaze and steering         
 
-    glob_match1 = "Orca19_[MN]*[0-9]*_[0-9][!a-zA-Z].csv" 
+    glob_match1 = "Orca19_[MN]*[0-9]*_[0-9]*.csv" 
     
 
     for dirs in os.walk(rootdir): #does it for all dirs in that folder
@@ -28,10 +28,11 @@ if __name__ == '__main__':
             
             print(fn)
             
-
+            if "old" in fn: continue
             trial_data = pd.read_csv(fn)
             #print(trial_data)
-
+            
+            trial_data["filename"] = fn
                 
             master_stitch = pd.concat([master_stitch,trial_data])
             
