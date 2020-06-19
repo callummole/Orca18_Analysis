@@ -10,3 +10,5 @@ Post-Processing/Temp/*
 *.xlsx
 *nb.html
 *.rda
+*eps
+*svg
