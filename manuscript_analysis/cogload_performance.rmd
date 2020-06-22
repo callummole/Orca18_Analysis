@@ -7,16 +7,12 @@ output:
   pdf_document: default
 ---
 
-## Loading the Data 
-
-First, we want to add the files into one big data frame. For each participant we have two files. One 'EndofTrial' file that records counts, and one 'WithinTrial' file that records responses to stimuli.
-
 
 ```{r, echo=TRUE, message=FALSE}
 
-library("tidyverse") #load code libraries for analysis
+library("tidyverse") 
 
-FilePath <- "F:/Orca_rerun_steering/" #filepath)
+FilePath <- "F:/Orca_rerun_steering/" 
 text_multiplier <- ggplot2:::.pt
 ansize = 8/text_multiplier
 
@@ -104,22 +100,9 @@ head(eot_df)
 ```
 
 
-You can see that we have two data frames. 
-
-The first, __EoT_dataframe__ has 12 columns. Each row is a trial (_trialn_) . The first column _X_ is the data frame index so each row has a unique identifier. The next four columns (_ppid, targetoccurence, targetnumber, trialn_) contains all the information necessary for that particular trial. The last three rows (_EoTScore1, TargetCount1...EoTScore3, TargetCount3_) contains the user inputted scores, and the actual target counts for each target. NA is inputted to any cells of trials that had fewer targets than three. 
-
-The second dataframe, __WiT_dataframe__, also has 12 columns. Here each row is a stimulus presentation. The first five columns are the same as __EoT_dataframe__. _CurrentAudio_ is the heard stimulus. _RT_ is the response time (-1 if not responded). _ResponseCategory_ is a code for how appropriate the response is: 1 = true positive, 2 = false negative, 3 = false positive, 4 =  true negative. _Target1...Target3_ indicates the actual targets for that trial. 
-
-Let's save these files so we don't have to load them again.
-
-
-## Calculating Measures
-
-The dataframes now hold all the data needed for calculating measures for each trial.
-
 The experiment design allows many ways to capture performance. There are three obvious ways of measures performance: the speed of response, whether the participant responded appropriately, and how far off they were in their recorded target counts.
 
-From the __WiT_dataframe__ the following measures need to be calculated:   
+From the __wit_df__ dataframe the following measures need to be calculated:   
 1. MeanRT_TruePos (MeanRT for True Positives)   
 2. StdRT_TruePos (Standard deviation of RT for True Positives)   
 3. Perc_Correct (True Positives and True Negatives)   
@@ -170,7 +153,7 @@ SummaryCounts <- mutate(SummaryCounts, Perc_Correct = (TruePos + TrueNeg)/ Total
 
 ```{r, pc correct}
 
-ggplot(SummaryCounts, aes(x = Perc_Correct, group = factor(block), fill = factor(block))) + geom_histogram(position="identity", bins = 30, alpha = .5)
+#no inferences are made here as it's a distraction from the main points. Just print some useful info.
 
 
 SummaryCounts %>% 
@@ -206,14 +189,12 @@ ppid_rts <- SummaryRTs %>%
 
 ```{r, load steering measures}
 
-setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 #load steergaze data
+steergazedata <- readRDS("../Data/Orca19_collated_steering2.rds")  
 
-
-#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
-#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
-steergazedata <- readRDS("../Data/Orca19_collated_steering.rds")  
+steergazedata$autoflag<- plyr::mapvalues(steergazedata$autoflag, from = c("True", "False"), to = c("TRUE", "FALSE"))
 
 steergazedata <- steergazedata %>% 
   mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
@@ -263,6 +244,10 @@ rt_summary <- steergazedata %>%
 ```
 
 ```{r, tradeoff}
+
+#this chunk is a pretty superficial look at whether some measures of error on the cognitive task correlate with maximum steerinb bias, or RT in the steering task. 
+
+# The correlations are weak, and it's not an integral part of the study, so I haven't investigated further.
 
 ppid_pcs <- left_join(ppid_pcs, sb_summary, by = "ppid")
 ppid_pcs <- left_join(ppid_pcs, rt_summary, by = "ppid")
@@ -340,7 +325,7 @@ p_timings <- ggplot(trial_steer, aes(x = timestamp_exp, y = sb_mirrored)) +
   #cogtask
   geom_segment(data = targets, aes(x = timestamp_exp, xend = timestamp_exp, y = 0, yend = t_y), col = "grey40") +
   geom_segment(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp, xend = timestamp_exp + RT, y = t_y, yend = t_y), linetype = "dotted", col = "grey40") +
-  geom_point(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp + RT, y = t_y), col = "#33A02C") +
+  geom_point(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp + RT, y = t_y), fill = "green3", col = "green3", shape = 22) +
   geom_segment(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp + RT, xend = timestamp_exp + RT, y = 0, yend = t_y), col = "#33A02C") +
   geom_text(data = targets, aes(x = timestamp_exp, y = t_y+.15, label = CurrentAudio), size = ansize, col = "grey40") +
   geom_segment(data = distractors, aes(x = timestamp_exp, xend = timestamp_exp, y = 0, yend = .5), col = "grey60", linetype = "dashed") + 
@@ -360,8 +345,8 @@ p_timings <- ggplot(trial_steer, aes(x = timestamp_exp, y = sb_mirrored)) +
   
   #steering signal
   geom_path(aes(group = autoflag, col = autoflag)) +
-  geom_point(data = onset_frame, col = "black") +
-  geom_point(data = takeover_frame, col = "black") +
+  geom_point(data = onset_frame, fill = "black", col = "black", shape = 23) +
+  geom_point(data = takeover_frame, fill = "black", col = "black", shape = 23) +
   coord_cartesian(ylim = c(-1.5,1.5)) +
   theme_classic() +
   
@@ -373,7 +358,7 @@ p_timings <- ggplot(trial_steer, aes(x = timestamp_exp, y = sb_mirrored)) +
   annotate("segment", x = leg_l1-leg_h, xend = leg_l1, y= leg_t1 - (leg_v), yend = leg_t1 - (leg_v), col = "grey40") +
   annotate("text", x = leg_l1+leg_h, y = leg_t1 - (leg_v), label = "Targets", hjust = 0, vjust = .5, size = ansize) +
   
-  annotate("point", x = leg_l1-(leg_h/2), y= leg_t1 - (2*leg_v), col = "green3") +
+  annotate("point", x = leg_l1-(leg_h/2), y= leg_t1 - (2*leg_v), fill="green3", col = "green3", shape = 22) +
   annotate("text", x = leg_l1+leg_h, y = leg_t1 - (2*leg_v), label = "Button Press", hjust = 0, vjust = .5, size = ansize) +
 
   annotate("segment", x = leg_l-leg_h, xend = leg_l, y= leg_t, yend = leg_t, col = cols[4]) +
@@ -393,22 +378,5 @@ ggsave("p_methods_timings.eps", plot = p_timings, dev = cairo_ps, width = 13.2, 
 
 ```
 
-
-
-```{r, eval = FALSE}
-
-#First, replace NA with Zeros for the following code to work. This means I can use the same code on all trials, even though some may have different amounts of targets.
-eot_df[is.na(eot_df)] <- 0
-
-#Calculate the error for each target.
-eot_df <- mutate(eot_df, 
-                        Error1 = EoTScore1 - TargetCount1,
-                        Error2 = EoTScore2 - TargetCount2)
-
-#Calculate the total absolute error and divide by targetnumber
-eot_df <- mutate(eot_df, AvgCountError = (abs(Error1) + abs(Error2)) / targetnumber)
-
-
-```
 
 

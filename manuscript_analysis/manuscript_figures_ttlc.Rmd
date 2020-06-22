@@ -25,8 +25,7 @@ library(ggridges)
 cogload_cols = c("#1f77b4","#d62728")
 
 #balanced colours are, in order of high to low severity:
-#cmap = cm.get_cmap('tab10')
-#rgbas = cmap([6,1,2,4]
+
 #pink = #e377c2
 #orange = #ff7f0e
 #green = #2ca02c
@@ -55,10 +54,9 @@ REFIT = FALSE #put to true if you want to refit model and resimulate P(Exit)
 ```{r, load data}
 
 
-setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 #load steergaze data
-
 
 #steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
 #saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
@@ -114,15 +112,10 @@ steergazedata <- steergazedata %>%
 
 steergazedata$cogload <- as.factor(steergazedata$cogload)
 
-
 #rename cogload factors so that it ameks sense
 steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
 
 
-
-
-
-#we now have two data frames. "balanced_steerdata" and "random_steerdata"
 data_RTs <- steergazedata  %>% 
   ungroup() %>% 
   group_by(ppid, cogload, trialn) %>% 
@@ -140,8 +133,6 @@ data_RTs <- steergazedata  %>%
             early = time_remaining - RT,
             ttlc_end_of_trial = ttlc_onset - time_remaining)
 
-#data_RTs <- mutate(data_RTs, time_remaining = 15 - onsettime,
- #                  early = time_remaining - RT)
 print(unique(data_RTs$ttlc_onset))
 
 data_RTs <- data_RTs %>% mutate(log_ttake = log(ttlc_takeover), log_TR = log(time_remaining), log_tons = log(ttlc_onset))
@@ -240,12 +231,6 @@ ticks <- plot_data %>%
   select(ttlc_onset, ttlc_onset_round) %>% 
   unique(.)
 
-#data_RTs %>% 
-#  filter(design=="balanced", cogload == "noload", premature == 0) %>% 
-#  group_by(ttlc_onset) %>% 
-#  summarise(maxttlc = max(ttlc_takeover))
-
-
 
 censors <- data_RTs_cens %>%
   ungroup() %>% 
@@ -318,22 +303,15 @@ ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
 
 
 print(ribbon)
-#ggsave("overall_predictiveintervals_ttlc_noload_log_nointer.png", plot = ribbon, dev = "png", width = 18, height = 8.5, units = "cm", dpi = 300, type = "cairo")
-  
-#ggsave("raw_predictive_noload.svg", plot = ribbon, dev = "svg", width = 13.2, height = 8.5, units = "cm", dpi = 300)
+
 ggsave("raw_predictive_noload.eps", plot = ribbon, dev = cairo_ps, width = 13.2, height = 8.5, units = "cm", dpi = 300)
-
-#ggsave("raw_predictive_noload.tiff", plot = ribbon, dev = "tiff", width = 13.2, height = 8.5, units = "cm", dpi = 300)
-
 
 
 ```
 
 ```{r, coefficients plot mu}
 
-
 pars = c("b_Intercept", "b_ttlc_onset", "b_cogloadload", "b_ttlc_onset:cogloadload", "sd_ppid__Intercept", "sd_ppid__ttlc_onset", "sd_ppid__cogloadload", "sd_ppid__ttlc_onset:cogloadload")
-
 
 breaks = c(parse(text = TeX('$\\beta_{\\mu 0}$')),
            parse(text = TeX('$\\beta_{\\mu TF}$')),
@@ -344,12 +322,6 @@ breaks = c(parse(text = TeX('$\\beta_{\\mu 0}$')),
            parse(text = TeX('$sd \\, \\beta_{\\mu L}$')), 
            parse(text = TeX('$sd \\, \\beta_{\\mu TF\\times L}$')))
                
-
-#                            'd'=TeX('$mode(L_{ij})$'),
-#                            'ft'=parse(text = TeX('$R_{ij}$')),
-#                            'ew'=parse(text = TeX('$Q_{ij}$')),
-#xlab(expression(paste(beta, " TTLC"["Failure"]))) +
-
 draws_coef <- MOD %>% 
   posterior_samples(., pars = pars) %>% 
   gather(key = "b", value = "estimate") %>% 
@@ -363,9 +335,6 @@ p_coef <- MOD %>%
   posterior_samples(., pars = c("b_cogloadload","b_ttlc_onset:cogloadload")) %>% 
   p_direction() 
 
-
-#draws_coef[5,2:4] <- exp(draws_coef[5,2:4])
-#draws_coef[7,2:4] <- exp(draws_coef[7,2:4])
 
 print(draws_coef)
 draws_coef$type <- c("f","f","f","f","r","r","r","r")
@@ -402,13 +371,6 @@ breaks = c(parse(text = TeX('$\\beta_{\\sigma 0}$')),
            parse(text = TeX('$sd \\, \\beta_{\\sigma TF}$')),
            parse(text = TeX('$sd \\, \\beta_{\\sigma L}$')))
            
-               
-
-#                            'd'=TeX('$mode(L_{ij})$'),
-#                            'ft'=parse(text = TeX('$R_{ij}$')),
-#                            'ew'=parse(text = TeX('$Q_{ij}$')),
-#xlab(expression(paste(beta, " TTLC"["Failure"]))) +
-
 draws_coef_sig <- MOD %>% 
   posterior_samples(., pars = pars) %>% 
   gather(key = "b", value = "estimate") %>% 
@@ -419,9 +381,6 @@ draws_coef_sig <- MOD %>%
                "sd_ppid__sigma_cogloadload")) %>% 
   arrange(b)
 
-#summary(MOD)
-#draws_coef[5,2:4] <- exp(draws_coef[5,2:4])
-#draws_coef[7,2:4] <- exp(draws_coef[7,2:4])
 
 print(draws_coef_sig)
 draws_coef_sig$type <- c("f","f","f","r","r","r","r")
@@ -465,9 +424,6 @@ twosd.u = .5 + (twosd/2)
 
 
 ttlc_onset <- seq(1, to = 17, by = .5)
-#mean_censoring <- ttlc_onset - (15 - avg_onset)
-#censor <- data.frame(ttlc_onset, mean_censoring)
-#ppid <- 1:20
 cogload <- c("noload","load")
 pred_list <- expand_grid(ttlc_onset, cogload)
 preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
@@ -480,34 +436,11 @@ preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, 
          Q97.75 = max(Q97.75))
 
 
-
-#preds_sig <- fitted(MOD, newdata=pred_list, summary=TRUE, re_formula = NULL, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u), dpar = "sigma") %>% 
-#  cbind(pred_list)
-
-#names(preds_sig)[1] <- "sigma"
-#fixedeffs <- full_join(preds, preds_sig, by = c("ttlc_onset","cogload"))
-
-#old_preds <- preds
-
-
 pred_ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
   geom_ribbon(aes(ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1) + #99% band
   geom_ribbon(aes(ymin = Q15.85, ymax = Q84.15, fill = cogload), col = NA, alpha = .3) + #50% band
   
-  
-  #geom_line(data = fixedeffs, aes(y = Estimate + sigma, col = cogload), alpha = 1, linetype = "dotted") +
-  #geom_line(data = fixedeffs, aes(y = Estimate - sigma, col = cogload), alpha = 1, linetype = "dotted") +
-  #geom_line(data = fixedeffs, aes(y = Estimate + (sigma*2), col = cogload), alpha = .5, linetype = "dotted") +
-  #geom_line(data = fixedeffs, aes(y = Estimate - (sigma*2), col = cogload), alpha = .5, linetype = "dotted") +
-  
-  #annotate("text", x = 13.1, y = 4.3, label = expression(mu), hjust = 0, vjust = 0, size = 2.5) +
-  #annotate("text", x = 12.75, y = 5.65, label = expression(mu*" + "*sigma), hjust = 0, vjust = 0, size = 2.5) +
-  #annotate("text", x = 12.6, y = 7.5, label = expression(mu*" + 2"*sigma), hjust = 0, vjust = 0, size = 2.5) +
-  
-  #geom_line(aes(y = Q99.5, col = cogload), alpha = .4, linetype = 2) +
-  #geom_line(aes(y = Q25, col = cogload), alpha = 1, linetype = 2) +
-  #geom_line(aes(y = Q75, col = cogload), alpha = 1, linetype = 2) +
-  
+
   annotate("text", x = 2.5, y = -.5, label = expression(mu*"-2"*sigma), hjust = .6, vjust = .7, size = ansize, col = cogload_cols[1]) +
   annotate("segment", x = 3, xend = 4, y = -.4, yend = .15, colour = cogload_cols[1], size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
   annotate("text",  x = 5, y = -.8, label = expression(mu*"-2"*sigma), hjust = .6, vjust = .7, size = ansize, col = cogload_cols[2]) +
@@ -546,21 +479,16 @@ dat_titles<- data.frame(
 noload_pp_checks <- ggplot(filter(balanced_data, cogload == "noload"), aes(x = ttlc_takeover, y = ..density..)) + 
   geom_density_ridges(data = filter(preds, cogload == "noload"), aes(x = .prediction, col = factor(ttlc_onset)), size = 1, rel_min_height = .005) +
   geom_histogram(aes(fill = factor(ttlc_onset)), alpha = .75, position = "identity", bins = 50) +
-  
-  #facet_wrap(~ttlc_onset) +
   scale_colour_manual(values = balanced_cols, guide = F) +
   scale_fill_manual(values = balanced_cols, guide = F) +
   coord_cartesian(xlim = c(0, 8), clip= "off") +
   theme_classic() +
-  #facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)paste0((round(as.double(x),2)), " s"))) +
-  #facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return(""))) +
-  #facet_wrap(~ttlc_onset, labeller = labeller(ttlc_onset = ttlc_onset.labs)) +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
        panel.grid = element_blank(),
        strip.background = element_blank()) +
   theme_orca +
-   # geom_text(data = dat_titles, aes(x = 4, y = Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols) +
+   
   ylab("Density") +
   xlab(expression("TTLC"["Takeover"]*" (s)"))
 
@@ -573,9 +501,7 @@ load_pp_checks <- ggplot(filter(balanced_data, cogload == "load"), aes(x = ttlc_
   scale_fill_manual(values = balanced_cols, guide = F) +
   coord_cartesian(xlim = c(0, 8), clip= "off") +
   theme_classic() +
-  #facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)paste0((round(as.double(x),2)), " s"))) +
   facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return(""))) +
-  #facet_wrap(~ttlc_onset, labeller = labeller(ttlc_onset = ttlc_onset.labs)) +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
        panel.grid = element_blank(),
@@ -623,8 +549,6 @@ ggsave("ttlc_ppchecks.eps", plot = p_ppchecks, dev = cairo_ps, width = 13.2, hei
 
 #predictive distribution of map and sigma for single row of parameters (so you can choose to include uncertainty or not)
 predict_condition_dpars_fixed <- function(row, ttlc_onset){
-  
-  
   
   
   #########
@@ -885,19 +809,19 @@ cogload <- c("noload","load")
 
 pred_list <- expand_grid(ttlc_onset, cogload)
 
-#MAP range (FIXED EFFECTS)
+#range (FIXED EFFECTS)
 map_sig <- fitted(MOD, newdata=pred_list, summary=TRUE, re_formula = NA, dpar = "sigma") %>% 
   cbind(pred_list) %>% 
   mutate(range95 = Estimate*4)
 
-#MAP + Fixed effect MODEL ERROR 
+#med params + Fixed effect MODEL ERROR 
 pop_range <- predict(MOD, newdata=pred_list, summary=TRUE, re_formula = NA, probs = c(twosd.l, twosd.u)) %>% 
   cbind(pred_list) %>% 
   mutate(range95 = Q97.75 - Q2.25)
 
 
 
-#MAP range for MAP FIXED + RANDOM
+#range for med params FIXED + RANDOM
 
 samples <- as.data.frame(MOD[["fit"]]@sim[["samples"]][[1]])
 samples <- samples[1001:10000, ]
@@ -951,19 +875,9 @@ pp_quantiles <- pp_range %>%
 
 range_plot <- ggplot(pp_quantiles, aes(x = ttlc_onset, y = cv, fill = cogload, col = cogload)) +
   
-#  geom_area(data = pop_range, alpha = .1) + #99%band
-  #geom_ribbon(data = pp_range, aes(ymin = 0, ymax = range95, fill = cogload, col = cogload), alpha = .1) + #50%
   geom_area(data = pp_quantiles, alpha = .1) + #50%band
   geom_area(data = sig_fixed, alpha = .1) + #50% band
   geom_area(data = raneff_range, alpha = .1) +
-  
-  #geom_line(data = fixeff_range, aes(y = range95), col = "black") +
-  #geom_line(data = sig_fixed, aes(y = range95), col = "green") +
-  
-
-  #geom_ribbon(data = raneff_range_meds, aes(ymin = 0, ymax = range95, fill = cogload), col = "black", alpha = .1) +#50% band
-  #scale_color_manual(values = cogload_cols, guide = guide_legend(reverse = TRUE), labels = c('SupAuto+ACMT', 'SupAuto')) + 
-  #scale_fill_manual(values = cogload_cols) + guides(fill = FALSE) +
   theme_classic() +
   xlab(expression("TTLC"["Failure"]*" (s)")) +
   facet_wrap(~cogload) +
@@ -978,11 +892,6 @@ range_plot <- ggplot(pp_quantiles, aes(x = ttlc_onset, y = cv, fill = cogload, c
        legend.background = element_blank(),
        legend.title = element_blank(),
        legend.direction = ("horizontal")) 
-  
-  #coord_cartesian(ylim = c(-1,8), xlim = c(0,13)) 
-  #theme(legend.position = c(0.2, 0.8),
-   #     legend.title = element_blank())
-
 
 print(range_plot)
 
@@ -1014,27 +923,6 @@ avg_cv <- pp_quantiles %>%
 noload_range<- filter(props_df, cogload == "noload")$full_range
 props_df$noload_full <- rep(noload_range, each = 2)
 
-#make values as proportions of no load.
-#props_df <- props_df %>% 
-#  mutate(within_prop = within_pp / noload_full,
-#         between_prop = (between_pp / noload_full) - within_prop,
-#         estimation_prop = (full_range/noload_full) - (within_prop + between_prop))
-
-
-#agg_df <- props_df %>% 
-#  filter(ttlc_onset >= 2) %>% 
-#  group_by(cogload) %>% 
-#  summarise(within = mean(within_prop),
-#            between = mean(between_prop),
-#            estimation = mean(estimation_prop),
-#            total = within+between+estimation) %>% 
-#  pivot_longer(-c(cogload,total),
-#               names_to = 'component',
-#               values_to = 'pc') %>% 
-#  mutate(component = fct_relevel(component, "estimation", "between", "within"),
-#         inter = interaction(cogload, component))
-
-
 #CV is unstable when mean is low, so filter from 2 ttlc above
 #CV is already standardised, so don't need to be a proportion of no load.
 props_df <- tibble(ttlc_onset = pp_quantiles$ttlc_onset,
@@ -1064,14 +952,6 @@ agg_df <- props_df %>%
   mutate(component = fct_relevel(component, "estimation", "between", "within"),
          inter = interaction(cogload, component)) %>% 
   mutate(pc = cv / totalmn)
-
-
-
-
-#take complementary colours using colour wheel. 
-##1edee8, #44c8cf, #60b1b5 #blues
-##e3261c, #ca4841, #b0605c #reds
-#colours_man = c("#1edee8","#e3261c", "#44c8cf", "#ca4841", "#60b1b5", "#b0605c")
 
 prop_plot <- ggplot(data = agg_df, aes(x = rev(component), y = cv, fill = rev(cogload))) +
   geom_col(position = "dodge", width = .5, alpha =.7) +
@@ -1176,6 +1056,9 @@ print(tests)
 ```
 
 ```{r, simulate pcross dataframe}
+
+#These Pcross data frames take a long time to simulate. 
+
 
 #prcros
 #what was the minimum ttlc that didn't exit the road? .15. That will be our estimate fo pcross.

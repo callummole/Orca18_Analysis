@@ -50,11 +50,9 @@ REFIT = FALSE #whether to refit the model.
 
 
 
-setwd("C:/git_repos/Orca18_Analysis/Post-Processing/")
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 #load steergaze data
-
-
 #steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
 #saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
 steergazedata <- readRDS("../Data/Orca19_collated_steering2.rds")  
