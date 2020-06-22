@@ -1,7 +1,7 @@
 ---
 title: "Orca Silent Failures, Companion to Manuscript"
 author: "Callum Mole"
-date: "23/04/2020"
+date: "22/06/2020"
 output: html_document
 ---
 
@@ -19,24 +19,16 @@ library(bayestestR)
 library(grid)
 library(zoo)
 
-#blue and red from matplotlib tab10 default color cycle.
-#red = #d62728
-#blue = #1f77b4
+#blue and red from matplotlib tab10 default color cycle to match up with python plots.
 cogload_cols = c("#1f77b4","#d62728")
 
 #balanced colours are, in order of high to low severity:
-#cmap = cm.get_cmap('tab10')
-#rgbas = cmap([6,1,2,4]
-#pink = #e377c2
-#orange = #ff7f0e
-#green = #2ca02c
-#purple = #9467bd
+#pink = #e377c2, #orange = #ff7f0e, #green = #2ca02c, #purple = #9467bd
 balanced_cols = c("#e377c2","#ff7f0e","#2ca02c","#9467bd")
 
 #for noload plots
 pred_col = "grey60"
 data_col = "black"
-
 
 #add theme here
 theme_orca <- theme(text = element_text(family = "sans", size = 10),
@@ -49,10 +41,12 @@ ansize = 8/text_multiplier
 pred_col = "grey60"
 
 
+REFIT = FALSE #whether to refit the model.
+
 ```
 
 
-```{r, load data}
+```{r, load data, warning= FALSE}
 
 
 
@@ -147,27 +141,7 @@ balanced_only <- filter(data_fromtakeover, design == "balanced")
 
 ```
 
-```{r, }
-library(EnvStats)
-
-x = rlnorm(1000000)
-xlog = log(x)
-
-xlog_med = median(xlog)
-xlog_mn = mean(xlog) #geometric mean of x
-#xlog_geo= geoMean(xlog)
-trans_med = exp(xlog_med)
-trans_mn = exp(xlog_mn)
-
-x_med = median(x)
-x_mn = mean(x)
-x_gmn = geoMean(x)
-
-
-
-```
-
-```{r, plotting data_fromtakeover}
+```{r, plotting data_fromtakeover, warning = FALSE}
 
 exitters <- data_fromtakeover %>% 
   filter(abs(sb_mirrored) > 1.5) %>% 
@@ -181,13 +155,7 @@ roll_lines <- balanced_only %>%
             medswa = median(swa_mirrored)) %>% 
   mutate(roll_sb = rollapply(medsb, 15, mean, align = "left", partial = TRUE),
          roll_swa = rollapply(medswa, 15, mean, align = "left", partial = TRUE)) #.1s rolling average
-    
 
-# New facet label names for dose variable
-#balanced_only$to_factor <- factor(balanced_only$ttlc_onset, levels = c("1","2","3","4"))
-#ttlc_onset.labs <- c("1.93 s", "4.21 s", "6.39 s", "8. 37 s")
-#print(unique(balanced_only$ttlc_onset))
-#names(ttlc_onset.labs) <- unique(balanced_only$ttlc_onset)
 
 uniq <- balanced_only %>% 
   ungroup() %>% 
@@ -209,14 +177,12 @@ p_lpos <- ggplot(balanced_only, aes(x = f / 60, y = sb_mirrored, group = trialid
   geom_line(data = roll_lines, aes(x = f / 60, y = roll_sb, group = cogload), size = 1) +
   
   
-  scale_color_manual(values = cogload_cols, labels =rev(c('SupAuto+ACMT', 'SupAuto')), guide = FALSE) + #scale_fill_manual(values = rev(cogload_cols)) + guides(fill = FALSE) +
+  scale_color_manual(values = cogload_cols, labels =rev(c('SupAuto+ACMT', 'SupAuto')), guide = FALSE) +
   
   #facet laps, change facet border, and place legend
   ylab("Steering Bias (m)") + xlab("Time from Takeover (s)") +
   theme_classic() +
-  #facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)paste0((round(as.double(x),2)), " s"))) +
   facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return(""))) +
-  #facet_wrap(~ttlc_onset, labeller = labeller(ttlc_onset = ttlc_onset.labs)) +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
        panel.grid = element_blank(),
@@ -229,7 +195,6 @@ p_lpos <- ggplot(balanced_only, aes(x = f / 60, y = sb_mirrored, group = trialid
   theme_orca +
   geom_text(data = dat_titles, aes(x = 1.5, y = -Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols)
   
-print(p_lpos)
 
 p_swa <- ggplot(balanced_only, aes(x = f / 60, y = swa_mirrored, group = trialid, col = cogload)) +
   geom_line(alpha = .05) +
@@ -243,9 +208,7 @@ p_swa <- ggplot(balanced_only, aes(x = f / 60, y = swa_mirrored, group = trialid
   #facet laps, change facet border, and place legend
   ylab(expression("Steering Wheel Angle ("*degree*")")) + xlab("Time from Takeover (s)") +
   theme_classic() +
-  #facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)paste0((round(as.double(x),2)), " s"))) +
   facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return(""))) +
-  #facet_wrap(~ttlc_onset, labeller = labeller(ttlc_onset = ttlc_onset.labs)) +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
        panel.grid = element_blank(),
@@ -257,9 +220,6 @@ p_swa <- ggplot(balanced_only, aes(x = f / 60, y = swa_mirrored, group = trialid
   theme_orca +
     geom_text(data = dat_titles, aes(x = 1.5, y = Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols)
   
-print(p_swa)
-
-
 measures_grid <- plot_grid(p_lpos, p_swa, ncol = 2, labels = c("A","B"), label_size = 12)
 print(measures_grid)
 
@@ -270,7 +230,7 @@ ggsave("steering_measures_plt.eps", plot = measures_grid, dev = cairo_ps, width 
 ```
 
 
-```{r, correlations, fig.height = 3.5, fig.width=5.2}
+```{r, correlations, fig.height = 3.5, fig.width=5.2, warning = FALSE}
 
 swa_max_uncentred <- function(swa, swa_to){
   #returns max angle that is the top of the swa turn range
@@ -300,9 +260,6 @@ data_fromtakeover <- data_fromtakeover %>%
         sb_mn = mean(sb_mirrored),
         sw_var = sd(swa))
 
-#data_fromtakeover <- data_fromtakeover %>% 
-#  group_by(trialid) %>% 
-#  mutate(n = n())
 
 ntrials <- length(unique(data_fromtakeover$trialid))
 
@@ -379,17 +336,18 @@ plot_trial <- function(df){
   
 }
 
-plot_trial(data_fromtakeover)
+plot_trial(data_fromtakeover)#plots an individual steering trace and highlights swa_max 
 ```
 
-```{r, fit model}
+```{r, fit model, warning = FALSE}
 
 data_sb <- mutate(data_sb, log_swamax = log(swa_max), log_ttake = log(ttlc_takeover))
 
 data_sb <- filter(data_sb, noinput == 0) #there is one trial where the SWA doesn't change but the driver disengages
 
-
-save_stancode <- function(form, dat, fam, priors = NA, mod = ""){
+if (REFIT){
+  
+  save_stancode <- function(form, dat, fam, priors = NA, mod = ""){
   if (is.na(priors)){
     sc <- make_stancode(form, dat, fam)  
   } else{
@@ -401,51 +359,39 @@ save_stancode <- function(form, dat, fam, priors = NA, mod = ""){
   writeLines(sc, filecon)
   close(filecon)
 
+  }
+  
+  form3 <- bf(log_swamax ~ log_ttake * cogload + (1 + log_ttake * cogload | ppid))
+
+
+  print(get_prior(form3, data_sb, family=gaussian()))
+            
+
+  #Use broad priors here. Use default prior for correlations.
+  myprior = c(set_prior("normal(0,2)", class="Intercept"), 
+            set_prior("normal(0,2)", class="b"),
+            set_prior("normal(0,1)", class="sigma"),
+            set_prior("cauchy(0,1)", class="sd"))
+
+  save_stancode(form2, data_sb, gaussian(), mod = "m3")
+
+  m3 <-brm(data = data_sb, formula = form3, family = gaussian(), prior = myprior,
+               iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
+
+  save(m3, file  = 'model_swa_loglog.rda')
+  
+} else {
+  load('model_swa_loglog.rda')
 }
 
-
-form3 <- bf(log_swamax ~ log_ttake * cogload + (1 + log_ttake * cogload | ppid)) #the interaction isn't that interpretable so let's omit it for now. TODO: see how much LOO-CV it reduces.
-#form2 <- bf(log_swamax ~ log_ttake + cogload + (1 + log_ttake + cogload | ppid))
-
-print(get_prior(form2, data_sb, family=gaussian()))
-            
-npp <- length(unique(dta_sb$ppid))
-inits <- list(list(b = array(1, dim = 2), Intercept = 1, sd_1 = array(1, dim =3), z_1 = array(1, dim = c(3,npp)))) 
-
-#tofit$cogload <- relevel(tofit$cogload, "noload")
-save_stancode(form2, data_sb, gaussian(), mod = "m3")
-
-m3 <-brm(data = data_sb, formula = form3, family = gaussian(),
-               iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-#we fit the interaction term because
-
+plot(m3)
 summary(m3)
 pp_check(m3)
-marginal_effects(m3)
 
-
-save(m3, file  = 'model_swa_loglog.rda')
-
-summary(m3)
-
-
-form_loglink <- bf(swa_max ~ log_ttake * cogload + (1 + log_ttake * cogload | ppid)) #the interaction isn't that interpretable
-
-fam <- brmsfamily("gaussian" , link = "log")
-print(get_prior(form_loglink, data_sb, family=fam))
-
-m_loglink <-brm(data = data_sb, formula = form_loglink, family = fam,
-               iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-
-
-summary(m_loglink)
-pp_check(m_loglink)
 
 ```
 
-```{r, plotting raw}
-
-load('model_swa.rda')
+```{r, plotting raw, warning = FALSE}
 
 onesd = .683
 onesd.l = .5 - (onesd/2)
@@ -472,7 +418,7 @@ preds <- predict(m3, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, p
 plot_data <- data_sb %>% 
    filter(design == "balanced") %>% 
    ungroup()
-#plot no load for paper.
+
 p_raw_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = ttlc_takeover, y = swa_max)) +
   
   
@@ -488,9 +434,6 @@ p_raw_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = ttlc_takeover,
   theme_orca +
   coord_cartesian(xlim = c(0,8), ylim = c(0,90))
   
-  
-print(p_raw_max)
-
 
 leg_v = .5 #vertical spacing
 leg_b = -.5 #starting bottom
@@ -527,10 +470,6 @@ p_log_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = log(ttlc_takeo
   annotate("point", x = leg_l, y= leg_b + (leg_v), col = pred_col, shape = 20, size = 2, alpa = .25) +
   annotate("text", x = leg_l+leg_h, y = leg_b + (leg_v), label = "Non-Repeated", hjust = 0, vjust = .5, size = ansize) 
   
-  
-print(p_log_max)
-
-
 p_log_max_load <- ggplot(filter(data_sb, cogload == "load"), aes(x = log(ttlc_takeover), y = log(swa_max))) +
   theme_classic() +
   geom_ribbon(data = preds, aes(x = log_ttake, ymin = Q2.25, ymax = Q97.75), fill = cogload_cols[2], col = NA, alpha = .1, inherit.aes = F) + #99% band
@@ -546,27 +485,14 @@ p_log_max_load <- ggplot(filter(data_sb, cogload == "load"), aes(x = log(ttlc_ta
        panel.background = element_blank(),
        plot.background = element_rect(fill = "transparent",colour = NA)) 
   
-p_log_max_load
+
   
-#Maybe put the load version in appendix.
-#plot.with.inset <-
-#  ggdraw() +
-#  draw_plot(p_log_max) +
-#  draw_plot(p_log_max_load, x = 0.1, y = .1, width = .4, height = .4)
 
 swamax_grid <- plot_grid(p_raw_max, p_log_max, ncol = 2, labels = c("A","B"), label_size = 12)
 
-
-
-print(swamax_grid)
-
-#ggsave("swa_max.png", plot = swamax_grid, dev = "png", width = 18, height = 6, units = "cm", dpi = 300, type = "cairo")
-#ggsave("swa_max_raw_preds.eps", plot = swamax_grid, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
-
-
 ```
 
-```{r, predictive plots}
+```{r, predictive plots, warning = FALSE}
 
 
 onesd = .683
@@ -580,7 +506,6 @@ twosd.u = .5 + (twosd/2)
 
 ttlc_take <- seq(.1, to = 13, by = .1)
 log_ttake <- log(ttlc_take)
-#ppid <- c(1:12, 14:20)
 cogload <- c("noload","load")
 pred_list <- expand_grid(log_ttake, cogload)
 preds <- predict(m3, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
@@ -591,10 +516,7 @@ preds <- predict(m3, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, p
          Q15.85 = min(Q15.85),
          Q84.15 = min(Q84.15),
          Q97.75 = max(Q97.75))
-  
 
-
-#preds$cogload <- relevel(preds$cogload, "noload")  
   
 loglog <- ggplot(preds, aes(x = log_ttake, group = cogload, col = cogload)) +
   
@@ -614,8 +536,6 @@ loglog <- ggplot(preds, aes(x = log_ttake, group = cogload, col = cogload)) +
   coord_cartesian(xlim = c(-2, 2.2), ylim = c(-1, 4.5)) +
   theme_orca
   
-print(loglog)
-  
 raw_preds <- ggplot(preds, aes(x = exp(log_ttake), group = cogload, col = cogload)) +
   theme_classic() +
   geom_ribbon(aes(ymin = exp(Q2.25), ymax = exp(Q97.75), fill = cogload), col = NA, alpha = .1) + #99% band
@@ -631,15 +551,6 @@ raw_preds <- ggplot(preds, aes(x = exp(log_ttake), group = cogload, col = cogloa
         legend.key.size = unit(.75,"line")) +
   xlab(expression("TTLC"["Takeover"]*" (s)")) + ylab(expression("SWA"["Max"]*degree)) 
 
-print(raw_preds)
-
-#plot.with.inset <-
-#  ggdraw() +
-#  draw_plot(loglog) +
-#  draw_plot(raw_inset, x = 0.15, y = .2, width = .4, height = .45)
-
-#print(plot.with.inset)
-
 
 steering_model_res <- plot_grid(p_raw_max, p_log_max, raw_preds, loglog, ncol = 2, nrow = 2, labels = c("A","B","C","D"), label_size = 12)
 print(steering_model_res)
@@ -649,7 +560,7 @@ ggsave("swa_graphed_results.eps", plot = steering_model_res, dev = cairo_ps, wid
 ```
 
 
-```{r, model coefficinets}
+```{r, model coefficients, warning = FALSE}
 
 pars = c("b_Intercept", "b_log_ttake", "b_cogloadload", "b_log_ttake:cogloadload",
          "sd_ppid__Intercept", "sd_ppid__log_ttake", "sd_ppid__cogloadload", "sd_ppid__log_take:cogloadload")
@@ -664,7 +575,7 @@ draws_coef <- m3 %>%
 
 print(draws_coef)
 
-print(exp(draws_coef))
+#print(exp(draws_coef))
 
 exp_coef <- exp(draws_coef[,2:4])
 print(exp_coef)
@@ -673,6 +584,8 @@ print(exp_coef)
 p_coef <- m3 %>% 
   posterior_samples(., pars = c("b_cogloadload","b_log_ttake:cogloadload")) %>% 
   p_direction() 
+
+
 #draws_plot <- draws_coef[2:nrow(draws_coef),]
 
 #print(exp(draws_coef[3,2:4]))
