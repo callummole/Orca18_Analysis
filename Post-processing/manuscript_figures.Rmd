@@ -837,7 +837,7 @@ avg_pcross <- function(dpar_dists, tt = 0){
 }
 
 
-simulate_pcross <- function(samples, tt = c(0,.05,.1,.15,.2,.25,.3,.35,.4,.45,.5)){
+simulate_pcross <- function(samples, tt = 0, ttlc_onset = seq(.1, to = 15, by = .5)){
   time <- Sys.time()
   for (row in 1:nrow(samples)) {
     print(row)
@@ -1101,70 +1101,7 @@ ggsave("predictive_intervals.png", plot = predicted_plot, dev = "png", width = 1
 
 ```
 
-```{r, simulate pcross dataframe}
 
-
-
-REFIT = TRUE
-if (REFIT) {
-  samples <- as.data.frame(MOD[["fit"]]@sim[["samples"]][[1]])
-  samples <- samples[1001:10000, ]
-  pc <- simulate_pcross(samples, 0)
-  save(pc, file = 'pcross.rda')  
-  
-  pc15 <- simulate_pcross(samples, .15)
-  save(pc15, file = 'pcross15.rda')  
-  
-  #pc50 <- simulate_pcross(samples, .5)
-  #save(pc15, file = 'pcross50.rda')  
-  
-} else {
-  load('pcross.rda')  
-  load('pcross15.rda')  
-}
-
-#prcros
-#what was the minimum ttlc that didn't exit the road? 
-notexit <- data_RTs_cens %>% 
-  filter(maxsb < 1.5)
-
-exited <- data_RTs_cens %>% 
-  filter(maxsb > 1.5)
-
-#minimum ttlc for nonexiters is .15 (though the exiters range from .09 - .6 ttlc.)
-
-samps <- samples[1:500,] #only a subset..
-pc_full <- simulate_pcross(samps)
-save(pc_full, file = 'pcross_full.rda')  
-
-```
-
-```{r, plotting p_full}
-
-onesd = .683
-onesd.l = .5 - (onesd/2)
-onesd.u = .5 + (onesd/2)
-twosd = .955
-twosd.l = .5 - (twosd/2)
-twosd.u = .5 + (twosd/2)
-
-pc_bounds_full <- pc_full %>% 
-  ungroup() %>% 
-  group_by(ttlc_onset, cogload, tminus) %>% 
-  summarise(Estimate = mean(val),
-            Q2.25 = qi(val, .width = twosd)[1],
-            Q15.85 = qi(val, .width = onesd)[1],
-            Q84.15 = qi(val, .width = onesd)[2],
-            Q97.75 = qi(val, .width = twosd)[2])
-
-ggplot(pc_bounds_full, aes(x = ttlc_onset, y= Estimate, col = factor(tminus), group = factor(tminus))) +
-  geom_line() +
-  facet_wrap(~cogload) +
-  coord_cartesian(xlim = c(.5,10), ylim = c(0,.5))
-
-ggsave("average_pcross_tminus.png", plot = last_plot(), dev = "png", width = 13.2, height = 6, units = "cm", dpi = 300, type = "cairo")
-
-```
 
 ```{r, hypotheticals}
 off_tangent <- function(w = 1.5, r = 60, v = 8){
@@ -1196,35 +1133,95 @@ off_tangent <- function(w = 1.5, r = 60, v = 8){
 
 #for motorways. national speed limit 70 mph (112.6 kph)
 mph = c(70,70,70,70,70, 70)
+kph = mph * 1.6
 ms = mph /2.237
 radii = c(2880, 2040, 1440, 1020, 720, 510)
 yawrate = ms/radii
+v2r = kph^2 / radii
 
-motorway <- data.frame("radii" = radii, "mph" = mph, "ms" = ms, "yawrate" = yawrate)
+motorway <- data.frame("radii" = radii, "mph" = mph, "kph" = kph, "ms" = ms, "yawrate" = yawrate, "v2r" = v2r)
 motorway <- motorway %>% 
   mutate(ttlc_tangent = off_tangent(w = 1.825, r = radii, v = ms))
 print(motorway)
 
 #for single lane carriageways. national speed limit 60 mph (96.6 kph)
 mph = c(60,60,60,60,60, 60, 60)
+kph = mph * 1.6
 ms = mph /2.237
 radii = c(2040, 1440, 1020, 720, 510, 360, 255) #255 is the added minimum for 85kph design.
 yawrate = ms/radii
+v2r = kph^2 / radii
 
-single <- data.frame("radii" = radii, "mph" = mph, "ms" = ms, "yawrate" = yawrate)
+single <- data.frame("radii" = radii, "mph" = mph, "kph" = kph, "ms" = ms, "yawrate" = yawrate, "v2r" = v2r)
 single <- single %>% 
   mutate(ttlc_tangent_wide = off_tangent(w = 1.825, r = radii, v = ms),
          ttlc_tangent_narrow = off_tangent(w = 1.5, r = radii, v = ms),)
 print(single)
 
+#Uk standards basically range from 1-3 s ttlc.
+#Reasonably sharp bend, 60 mph, 500. Standard lane width (3.65 m)
+mph = c(60,70)
+kph = mph * 1.6
+ms = mph/2.237
+radii = c(500,2000)
+yawrate = ms/radii
+v2r = kph^2 / radii
+tests <- data.frame("radii" = radii, "mph" = mph, "kph" = kph, "ms" = ms, "yawrate" = yawrate, "v2r" = v2r)
+tests <- tests %>% 
+  mutate(ttlc_tangent_wide = off_tangent(w = 1.825, r = radii, v = ms),
+         ttlc_tangent_narrow = off_tangent(w = 1.5, r = radii, v = ms),)
+print(tests)
+
+#Gradual motorway, 70 mph, 1500. Standard lane width (3.65 m)
+```
+
+```{r, simulate pcross dataframe}
+
+#prcros
+#what was the minimum ttlc that didn't exit the road? .15. That will be our estimate fo pcross.
+
+
+#minimum ttlc for nonexiters is .15 (though the exiters range from .09 - .6 ttlc.)
+# based on the hypothetical roads
+
+notexit <- data_RTs_cens %>% 
+  filter(maxsb < 1.5)
+
+exited <- data_RTs_cens %>% 
+  filter(maxsb > 1.5)
+
+if (REFIT) {
+  samples <- as.data.frame(MOD[["fit"]]@sim[["samples"]][[1]])
+  samples <- samples[1001:10000, ]
+  pc <- simulate_pcross(samples, 0)
+  save(pc, file = 'pcross.rda')  
+  
+  pc15 <- simulate_pcross(samples, .15)
+  save(pc15, file = 'pcross15.rda')  
+  
+  samps <- samples[1:2000,] #only a subset..
+  pc_full <- simulate_pcross(samps, tt = c(0,.05,.1,.15,.2,.25,.3,.35,.4,.45,.5,.55,.6,.65,.7,.75,.8,.85,.9,.95,1), ttlc_onset = c(1.6,2.7))
+  save(pc_full, file = 'pcross_full.rda')  
+  
+  #pc50 <- simulate_pcross(samples, .5)
+  #save(pc15, file = 'pcross50.rda')  
+  
+} else {
+  load('pcross.rda')  
+  load('pcross15.rda')  
+  load('pcross_full.rda')
+  
+}
+
+
+
 
 ```
 
 
-
 ```{r, pcross plot}
 
-load('pcross.rda')
+#load('pcross.rda')
 onesd = .683
 onesd.l = .5 - (onesd/2)
 onesd.u = .5 + (onesd/2)
@@ -1232,7 +1229,7 @@ twosd = .955
 twosd.l = .5 - (twosd/2)
 twosd.u = .5 + (twosd/2)
 
-pc_bounds <- pc %>% 
+pc_bounds <- pc15 %>% 
   ungroup() %>% 
   group_by(ttlc_onset, cogload) %>% 
   summarise(Estimate = mean(val),
@@ -1254,18 +1251,20 @@ psim <- ggplot() +
   geom_ribbon(data =pc_bounds, aes(x=ttlc_onset, ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1, inherit.aes = FALSE) + #99% band
   geom_ribbon(data = pc_bounds, aes(x = ttlc_onset, ymin = Q15.85, ymax = Q84.15, fill = cogload), alpha = .2, inherit.aes = FALSE) + #50% band
   
-  geom_vline(xintercept = c(2.3, 1.6), col = "grey40", linetype = 3) +
-  annotate("text", x = 3.5, y = .075, label = "Motorway", hjust = .5, vjust = 0, size = ansize) +
-  annotate("segment", x = 2.9, xend = 2.32, y = .073, yend = .0675, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  geom_vline(xintercept =  1.6, col = "grey40", linetype = 3) +
+  geom_vline(xintercept = 2.7, col = "grey40", linetype = 2) +
+  annotate("text", x = 3.7, y = .075, label = "Motorway Bend", hjust = .5, vjust = 0, size = ansize) +
+  annotate("segment", x = 3.1, xend = 2.72, y = .073, yend = .0675, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
   
-  annotate("text", x = 3.3, y = .095, label = "Rural Road", hjust = .5, vjust = 0, size = ansize) +
-  annotate("segment", x = 2.7, xend = 1.62, y = .093, yend = .0875, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  annotate("text", x = 2.6, y = .095, label = "Rural Road Bend", hjust = .5, vjust = 0, size = ansize) +
+  annotate("segment", x = 2.2, xend = 1.62, y = .093, yend = .0875, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
   
   theme_classic() +
   ylab("P(Exit)") +
   xlab(expression("TTLC"["Failure"]*" (s)")) +
-  coord_cartesian(xlim = c(.5, 10), ylim = c(0,.1)) +
-  scale_y_continuous(breaks = c(0, 0.025, 0.05, 0.075, .1), labels = c("0",".025",".05",".075",".1")) +
+  coord_cartesian(xlim = c(.5, 7), ylim = c(0,.125)) +
+  scale_y_continuous(breaks = c(0, 0.04, 0.08, 0.12), labels = c("0",".04",".08",".12")) +
+  
   scale_color_manual(values = rev(cogload_cols), labels = c('SupAuto+ACMT', 'SupAuto'), guide = guide_legend(reverse = FALSE), ) + scale_fill_manual(values = rev(cogload_cols), guide = F) +
   theme(legend.position = c(.7,.9),
         legend.title = element_blank(),
@@ -1278,6 +1277,57 @@ show(psim)
 ggsave("simulated_pcross.png", plot = psim, dev = "png", width = 13.2, height = 6, units = "cm", dpi = 300, type = "cairo")
 
 ggsave("simulated_pcross.eps", plot = psim, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
+```
+
+```{r, plotting p_full}
+
+onesd = .683
+onesd.l = .5 - (onesd/2)
+onesd.u = .5 + (onesd/2)
+twosd = .955
+twosd.l = .5 - (twosd/2)
+twosd.u = .5 + (twosd/2)
+
+pc_bounds_full <- pc_full %>% 
+  ungroup() %>% 
+  group_by(ttlc_onset, cogload, tminus) %>% 
+  summarise(Estimate = mean(val),
+            Q2.25 = qi(val, .width = twosd)[1],
+            Q15.85 = qi(val, .width = onesd)[1],
+            Q84.15 = qi(val, .width = onesd)[2],
+            Q97.75 = qi(val, .width = twosd)[2])
+
+
+
+p_delay <- ggplot(pc_bounds_full, aes(x = as.numeric(tminus), col = factor(cogload), y = Estimate, group = cogload)) +
+  geom_line(data = filter(pc_bounds_full, ttlc_onset == 1.6), linetype = 3) +
+  geom_line(data = filter(pc_bounds_full, ttlc_onset == 2.7), linetype = 2) +
+  scale_color_manual(values = rev(cogload_cols), labels = c('SupAuto+ACMT', 'SupAuto'), guide = FALSE) +
+  theme_classic() +
+  theme_orca +
+  expand_limits(y= 1)+
+  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1), labels = c("0",".25",".5",".75", "1")) +
+  scale_x_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1), labels = c("0",".25",".5",".75", "1")) +
+  geom_vline(xintercept = .15, col = "grey80") +
+  annotate("text", x = .35, y = .825, label = "Delay used for\ncurrent predictions", hjust = .5, vjust = 0, size = ansize) +
+  annotate("segment", x = .23, xend = .16, y = .79, yend = .745, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  ylab("P(Exit)") +
+  xlab("Additional Delay (s)") +
+  theme(legend.position = c(.7,.9),
+        legend.title = element_blank(),
+        legend.background = element_blank(),
+        legend.key.size = unit(.75,"line")) 
+  
+
+print(p_delay)
+
+p_applied <- plot_grid(psim, p_delay, labels = c("A","B"), label_size = 12, ncol = 2, rel_widths = c(1.7,1))
+show(p_applied)
+
+ggsave("p_applied.png", plot = p_applied, dev = "png", width = 13.2, height = 6, units = "cm", dpi = 300, type = "cairo")
+
+ggsave("p_applied.eps", plot = p_applied, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
+
 ```
 
 
