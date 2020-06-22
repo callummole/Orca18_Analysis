@@ -1,4 +1,3 @@
-# Orca18_Analysis
 Analysis repository for Silent Failures in Automation. Experiment Repository: https://github.com/callummole/SP_18-19
 
 Preprint: Mole et al., 2020, Predicting Takeover Response to silent automated failures.
