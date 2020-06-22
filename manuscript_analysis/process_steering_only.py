@@ -3,18 +3,14 @@
 import os
 import pandas as pd
 from glob import glob
+import sys
 
 
 if __name__ == '__main__':
-	#rootdir = sys.argv[1] 
-    
-    #rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
-    #rootdir = "C:\\VENLAB data\\SP_18-19\\Data\\Orca19_Steering_Only"
-    #rootdir = "C:/git_repos/Orca18_Analysis/Data"
-    rootdir = "D:/Orca19_FullSteeringDataset"
-    output_filename = 'Orca19_collated_steering2.csv'
+	   
 
-    
+    rootdir = "../Data"
+    output_filename = 'collated_steering.csv'
 
     master_stitch = pd.DataFrame() #master data for gaze and steering         
 
@@ -37,7 +33,7 @@ if __name__ == '__main__':
             master_stitch = pd.concat([master_stitch,trial_data])
             
         #now you've built the master data of all trials, save it.
-    master_stitch.to_csv(rootdir + "/" + output_filename)
+    master_stitch.to_csv( rootdir + "/" + output_filename)
 
 
 

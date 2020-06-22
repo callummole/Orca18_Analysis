@@ -56,20 +56,18 @@ REFIT = FALSE #put to true if you want to refit model and resimulate P(Exit)
 
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-#load steergaze data
+#load steer data
 
-#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
-#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
-steergazedata <- readRDS("../Data/Orca19_collated_steering2.rds")  
+steerdata <- readRDS("../Data/collated_steering.rds")  
 
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   rename(swv = swa) %>% 
   mutate(swa = swv * 90)
 
-steergazedata$autoflag<- plyr::mapvalues(steergazedata$autoflag, from = c("True", "False"), to = c("TRUE", "FALSE"))
+steerdata$autoflag<- plyr::mapvalues(steerdata$autoflag, from = c("True", "False"), to = c("TRUE", "FALSE"))
 
 #mirror data
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(world_x_mirrored = if_else(bend == -1, world_x * -1, world_x),
          swa_mirrored = if_else(bend == -1, swa * -1, swa),
          swv_mirrored = if_else(bend == -1, swv * -1, swv),
@@ -83,7 +81,7 @@ ttlc_from_offset <- function(b, w = 1.5, r = 80, v = 8){
   ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
 }
 
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(ttlc_calc = ttlc_from_offset(sab))
 
 #add RT and disengage flag.
@@ -100,23 +98,23 @@ disengage_RT <- function(onsettime, timestamp_trial, autoflag){
 }
 
 #calculate RT
-steergazedata <- steergazedata  %>% 
+steerdata <- steerdata  %>% 
   group_by(ppid, sab, cogload, trialn) %>% 
   mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
          disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
   )
 
 #create unique trial id
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
 
-steergazedata$cogload <- as.factor(steergazedata$cogload)
+steerdata$cogload <- as.factor(steerdata$cogload)
 
 #rename cogload factors so that it ameks sense
-steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
+steerdata$cogload<- plyr::mapvalues(steerdata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
 
 
-data_RTs <- steergazedata  %>% 
+data_RTs <- steerdata  %>% 
   ungroup() %>% 
   group_by(ppid, cogload, trialn) %>% 
   summarize(RT = first(RT),

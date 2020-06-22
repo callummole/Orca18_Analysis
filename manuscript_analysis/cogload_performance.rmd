@@ -12,7 +12,9 @@ output:
 
 library("tidyverse") 
 
-FilePath <- "F:/Orca_rerun_steering/" 
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+FilePath <- "../Data/" 
 text_multiplier <- ggplot2:::.pt
 ansize = 8/text_multiplier
 
@@ -191,12 +193,12 @@ ppid_rts <- SummaryRTs %>%
 
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-#load steergaze data
-steergazedata <- readRDS("../Data/Orca19_collated_steering2.rds")  
+#load steer data
+steerdata <- readRDS("../Data/Orca19_collated_steering2.rds")  
 
-steergazedata$autoflag<- plyr::mapvalues(steergazedata$autoflag, from = c("True", "False"), to = c("TRUE", "FALSE"))
+steerdata$autoflag<- plyr::mapvalues(steerdata$autoflag, from = c("True", "False"), to = c("TRUE", "FALSE"))
 
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
 
 disengage_RT <- function(onsettime, timestamp_trial, autoflag){
@@ -211,7 +213,7 @@ disengage_RT <- function(onsettime, timestamp_trial, autoflag){
   
 }
 
-steergazedata <- steergazedata  %>% 
+steerdata <- steerdata  %>% 
   group_by(ppid, sab, cogload, trialn) %>% 
   mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
          disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
@@ -219,12 +221,12 @@ steergazedata <- steergazedata  %>%
 
 
 #mirror data
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(sb_mirrored = if_else(bend == -1, steeringbias * -1, steeringbias))
 
-steergazedata <- filter(steergazedata, cogload == "Middle")
+steerdata <- filter(steerdata, cogload == "Middle")
 
-sb_summary <- steergazedata %>% 
+sb_summary <- steerdata %>% 
   group_by(trialid) %>% 
   summarise(maxsb = max(abs(sb_mirrored)),
             ppid = first(ppid)) %>% 
@@ -232,7 +234,7 @@ sb_summary <- steergazedata %>%
   group_by(ppid) %>% 
   summarise(mn_maxsb = mean(maxsb))
 
-rt_summary <- steergazedata %>% 
+rt_summary <- steerdata %>% 
   group_by(trialid) %>% 
   summarise(RT = first(RT),
             ppid = first(ppid)) %>% 
@@ -289,7 +291,7 @@ trial_cog <- trial_cog %>%
   mutate(CurrentAudio = toupper(CurrentAudio))
 targets <- filter(trial_cog, currentaudio_type == "T")
 distractors <- filter(trial_cog, currentaudio_type == "D")
-trial_steer <- filter(steergazedata, trialid == trial)
+trial_steer <- filter(steerdata, trialid == trial)
 head(trial_cog)
 
 takeover_frame <-  trial_steer[first(which(trial_steer$autoflag == "FALSE")),]

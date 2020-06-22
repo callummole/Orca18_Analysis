@@ -52,19 +52,19 @@ REFIT = FALSE #whether to refit the model.
 
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-#load steergaze data
-#steergazedata <- read_csv("../Data/Orca19_collated_steering.csv")  
-#saveRDS(steergazedata, "../Data/Orca19_collated_steering.rds")
-steergazedata <- readRDS("../Data/Orca19_collated_steering2.rds")  
+#load steer data
+#steerdata <- read_csv("../Data/Orca19_collated_steering.csv")  
+#saveRDS(steerdata, "../Data/Orca19_collated_steering.rds")
+steerdata <- readRDS("../Data/collated_steering.rds")  
 
-steergazedata$autoflag<- plyr::mapvalues(steergazedata$autoflag, from = c("True", "False"), to = c("TRUE", "FALSE"))
+steerdata$autoflag<- plyr::mapvalues(steerdata$autoflag, from = c("True", "False"), to = c("TRUE", "FALSE"))
 
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   rename(swv = swa) %>% 
   mutate(swa = swv * 90)
 
 #mirror data
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(world_x_mirrored = if_else(bend == -1, world_x * -1, world_x),
          swa_mirrored = if_else(bend == -1, swa * -1, swa),
          swv_mirrored = if_else(bend == -1, swv * -1, swv),
@@ -78,7 +78,7 @@ ttlc_from_offset <- function(b, w = 1.5, r = 80, v = 8){
   ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
 }
 
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(ttlc_onset = ttlc_from_offset(sab))
 
 #add RT and disengage flag.
@@ -95,24 +95,24 @@ disengage_RT <- function(onsettime, timestamp_trial, autoflag){
 }
 
 #calculate RT
-steergazedata <- steergazedata  %>% 
+steerdata <- steerdata  %>% 
   group_by(ppid, sab, cogload, trialn) %>% 
   mutate(RT = disengage_RT(onsettime, timestamp_trial, autoflag),
          disengaged = ifelse(is.na(RT), 0, 1) #whether or not they actually took over.
   )
 
 #create unique trial id
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   mutate(trialid = paste(ppid, cogload, trialn, sep = "_"))
 
-steergazedata$cogload <- as.factor(steergazedata$cogload)
+steerdata$cogload <- as.factor(steerdata$cogload)
 
 
 #rename cogload factors so that it ameks sense
-steergazedata$cogload<- plyr::mapvalues(steergazedata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
+steerdata$cogload<- plyr::mapvalues(steerdata$cogload, from = c("None", "Middle"), to = c("noload", "load"))
 
 
-steergazedata <- steergazedata %>% 
+steerdata <- steerdata %>% 
   ungroup() %>% 
   mutate(ttlc_takeover = ttlc_onset - RT,
         premature = ifelse(RT <= 0, 1, 0),
@@ -125,7 +125,7 @@ steergazedata <- steergazedata %>%
 
 motor_delay = 0
 
-data_fromtakeover <- steergazedata %>% 
+data_fromtakeover <- steerdata %>% 
   ungroup() %>% 
   group_by(trialid) %>% 
   filter(timestamp_trial > (RT + onsettime - motor_delay)) %>% 
