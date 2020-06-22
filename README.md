@@ -10,7 +10,8 @@ The folder _Processing_ contains code for eye-tracking, most of which has not be
 
 The analysis pipeline from the Raw_Data folder hosted on the OSF (X) to the manuscript figures is as follows:
 
-1) run processing/processing_steering_only.py to output a collated steering csv. in the _Data_ folder.
+1) Extract the Raw_Data folder into the local repo _Data_ folder.
+1) run processing/processing_steering_only.py to output a collated steering csv in the _Data_ folder.
 2) _optional_, run save_as_rds.R to save time for loading csvs into R.
 3) run manuscript_figures_ttlc.rmd for TTLC results (put REFIT = TRUE to refit model).
 4) run manuscript_figures_swa.rmd for steering results (put REFIT = TRUE to refit model).
