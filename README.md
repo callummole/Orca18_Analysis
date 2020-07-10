@@ -12,9 +12,11 @@ The analysis pipeline from the Raw_Data folder hosted on the OSF (X) to the manu
 
 - Extract the Raw_Data folder into the local repo _Data_ folder.
 
-To generate the condition onset times and steering angle biases, and generate the simulated time-to-line-crossings (all relevant csvs are also found in the _Data_ folder), do the following:
+To generate the condition onset times and steering angle biases, and generate the simulated time-to-line-crossings (all relevant csvs are also found in the Raw Data folder so you can skip these steps), do the following:
 
-_to be completed_
+1) run TrackSimulation.py to output 'simulated_roadcrossing.csv'.
+2) run TrackSimulation_sobol.py to obtain the relevant steering angle biases for the random conditions. This file outputs 'SimResults_samplesobol_onsettimes.csv'.
+3) run plot_failures_perspective.py to plot all the failures and output 'simulated_ttlcs.csv', used in the analysis.
 
 To run the analysis and output figures found in the manuscript, do the following:
 
