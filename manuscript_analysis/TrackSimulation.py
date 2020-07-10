@@ -241,9 +241,9 @@ if __name__ == '__main__':
     Course_RoadStart = myStraight.RoadStart
     Course_midline = np.vstack((myStraight.midline, myBend.midline))
     Course_OutsideLine = np.vstack(
-        (myStraight.OutsideLine, myBend.OutsideLine)
+        (myStraight.LeftLine, myBend.OutsideLine)
         )
-    Course_InsideLine = np.vstack((myStraight.InsideLine, myBend.InsideLine))
+    Course_InsideLine = np.vstack((myStraight.RightLine, myBend.InsideLine))
     Course_CurveOrigin = myBend.CurveOrigin
     
     #Plot Bend
@@ -282,10 +282,9 @@ if __name__ == '__main__':
         raise Exception('Unrecognised radius')
 
     #onset pool times
-    #OnsetTimePool = np.arange(5, 9.25, step = .25) 
+    OnsetTimePool = np.arange(5, 9.25, step = .25) 
 
     #onset time pool = 6 s
-    OnsetTimePool = [5, 7, 9]
 
     #yawrateoffsets = np.linspace(-4,2,1000)
 
@@ -326,12 +325,13 @@ if __name__ == '__main__':
                 row_i += 1
 
     #plt.savefig(str(myrads) + '_Trajs.png', dpi=800)
-    #plt.show()
+    plt.show()
     
     #np.savetxt("SimResults_OnsetTimes_"+str(myrads)+".csv", simResults, delimiter=",")
 
    # np.savetxt("SimResults_onset_6_traj_80_1.csv", simResults, delimiter=",")
     np.savetxt("simulated_roadcrossing.csv", simResults, delimiter=",")
+    print("saved")
 
     #plot yr and time til crossing functions.
     # plt.figure(2)
