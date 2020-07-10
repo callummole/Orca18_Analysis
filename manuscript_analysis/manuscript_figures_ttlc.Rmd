@@ -37,13 +37,13 @@ pred_col = "grey60"
 data_col = "black"
 
 #add theme here
-theme_orca <- theme(text = element_text(family = "sans", size = 10),
+theme_orca <- theme(text = element_text(family = "sans", size = 9),
                     axis.text = element_text(family = "sans", size = 8),
-                    axis.title = element_text(family = "sans", size = 10),
+                    axis.title = element_text(family = "sans", size = 9),
                     ) 
 
 text_multiplier <- ggplot2:::.pt
-ansize = 8/text_multiplier
+ansize = 7/text_multiplier
 
 
 REFIT = FALSE #put to true if you want to refit model and resimulate P(Exit)
@@ -75,14 +75,15 @@ steerdata <- steerdata %>%
 
 
 
-ttlc_from_offset <- function(b, w = 1.5, r = 80, v = 8){
+TLC_from_offset <- function(b, w = 1.5, r = 80, v = 8){
   b = b / 180 * pi
   
-  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+  TLC = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
 }
 
 steerdata <- steerdata %>% 
-  mutate(ttlc_calc = ttlc_from_offset(sab))
+  mutate(TLC_calc = TLC_from_offset(sab))
+
 
 #add RT and disengage flag.
 disengage_RT <- function(onsettime, timestamp_trial, autoflag){
@@ -124,22 +125,27 @@ data_RTs <- steerdata  %>%
             maxsb = max(abs(sb_mirrored)),
             onsettime = first(onsettime),
             design = first(design),
-            simTTLC = first(simulated_ttlc),
-            ttlc_onset = first(ttlc_calc),
-            ttlc_takeover = ttlc_onset - RT,
-            time_remaining = 15 - onsettime, 
-            early = time_remaining - RT,
-            ttlc_end_of_trial = ttlc_onset - time_remaining)
+            #simTLC = first(simulated_TLC),
+            autofile_i = first(autofile_i),
+            TLC_calc = first(TLC_calc))
+            
 
-print(unique(data_RTs$ttlc_onset))
+#simualted_TLC
+sim_TLCs <- read_csv("../Post-processing/simulated_ttlcs.csv")
+data_RTs <- merge(data_RTs, sim_TLCs, by =c("sab","onsettime","autofile_i"))
 
-data_RTs <- data_RTs %>% mutate(log_ttake = log(ttlc_takeover), log_TR = log(time_remaining), log_tons = log(ttlc_onset))
-data_RTs <- data_RTs %>% mutate(inv_ttake = 1/ttlc_takeover, inv_TET = 1/ttlc_end_of_trial, inv_tons = 1/ttlc_onset)
+#add simulated TLCs.
+data_RTs <- data_RTs %>% 
+mutate(TLC_onset = simulated_ttlc,
+        TLC_takeover = TLC_onset - RT,
+        time_remaining = 15 - onsettime, 
+        early = time_remaining - RT,
+        TLC_end_of_trial = TLC_onset - time_remaining)  
 
 data_RTs_cens <- data_RTs %>%
   filter(premature == 0 | is.na(premature)) %>% #takeovers before onset are uncontrolled
-  mutate(censored = ifelse(is.na(ttlc_takeover), -1,
-                           ifelse(ttlc_takeover < ttlc_end_of_trial, -1, 0)))
+  mutate(censored = ifelse(is.na(TLC_takeover), -1,
+                           ifelse(TLC_takeover < TLC_end_of_trial, -1, 0)))
 
 data_RTs_cens$cogload <- relevel(data_RTs_cens$cogload, "noload")
 data_RTs_cens <- filter(data_RTs_cens, ppid != 13) #13 moves the wheel pretty much every trial before they should do,
@@ -152,7 +158,7 @@ data_RTs_cens <- filter(data_RTs_cens, ppid != 13) #13 moves the wheel pretty mu
 data_RTs_filtered <- filter(data_RTs, ppid != 13)
 print(1 - nrow(data_RTs_cens)/ nrow(data_RTs_filtered))
 
-print(length(unique(data_RTs_cens$ttlc_onset))) #number of criticalities tested.
+print(length(unique(data_RTs_cens$TLC_onset))) #number of criticalities tested.
 
 #proportion censored
 print(1 - nrow(filter(data_RTs_cens, censored == -1)) /nrow(data_RTs_cens))
@@ -163,21 +169,24 @@ print(1 - nrow(filter(data_RTs_cens, censored == -1)) /nrow(data_RTs_cens))
 
 
 if (REFIT){
-  bf9 <- bf(ttlc_takeover | trunc(ub = ttlc_onset) + cens(censored) ~ 1 + ttlc_onset * cogload + (1 + ttlc_onset * cogload | ppid), sigma ~ 1 + log(ttlc_onset) + cogload + (1 + log(ttlc_onset) + cogload | ppid))
+  bf9 <- bf(TLC_takeover | trunc(ub = TLC_onset) + cens(censored) ~ 1 + TLC_onset * cogload + (1 + TLC_onset * cogload | ppid), sigma ~ 1 + log(TLC_onset) + cogload + (1 + log(TLC_onset) + cogload | ppid))
 
   fam <- brmsfamily("gaussian", link_sigma = "log")
   print(get_prior(bf9, data =data_RTs_cens, family=fam))
 
-  myprior = c(set_prior("normal(.3,1)", class="Intercept", dpar = "sigma"),
-            set_prior("cauchy(0,1)", class="sd"))
+  #broad priors.
+  myprior = c(set_prior("normal(0,2)", class="Intercept"), 
+            set_prior("cauchy(0,1)", class="sd"),
+            set_prior("normal(0,2)", class="b"))
 
+  #there will be initial value errors due to log link on sigma. Could set initial values, but it samples eventually almost every time.
   m9.gauss <- brm(data = data_RTs_cens, formula = bf9,
                 family = fam, prior = myprior, #inits = inits9,
                 iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
-  save(m9.gauss, file = 'mymod.rda')  
+  save(m9.gauss, file = 'mymod_simTLC.rda')  
 } else {
   #save('mymod', )
-  load('mymod.rda')
+  load('mymod_simTLC.rda')
 }
 
 
@@ -188,7 +197,7 @@ summary(m9.gauss)
 
 
 
-```{r, fig1 - visualising predictive intervals for no load, fig.height = 3.5, fig.width=5.2}
+```{r, fig1 - visualising predictive intervals for no load, fig.width= 3.42, fig.height=2.75}
 
 MOD <- m9.gauss
 
@@ -204,14 +213,14 @@ twosd.u = .5 + (twosd/2)
 
 #avg_onset = mean(data_RTs_cens$onsettime)
 #Fig1, overall predictive intervals.
-ttlc_onset <- seq(.1, to = 17, by = .5)
-#mean_censoring <- ttlc_onset - (15 - avg_onset)
-#censor <- data.frame(ttlc_onset, mean_censoring)
+TLC_onset <- seq(.1, to = 17, by = .5)
+#mean_censoring <- TLC_onset - (15 - avg_onset)
+#censor <- data.frame(TLC_onset, mean_censoring)
 cogload <- c("noload")
-pred_list <- expand_grid(ttlc_onset, cogload)
+pred_list <- expand_grid(TLC_onset, cogload)
 preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
   cbind(pred_list) %>%
-  group_by(ttlc_onset) %>% 
+  group_by(TLC_onset) %>% 
   mutate(Estimate = mean(Estimate),
          Q2.25 = min(Q2.25),
          Q15.85 = min(Q15.85),
@@ -222,94 +231,99 @@ preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, 
 plot_data <- data_RTs %>% 
   filter(design == "balanced") %>% 
   ungroup() %>% 
-  mutate(ttlc_onset_round = round(ttlc_onset, digits = 1)) 
-  #select(ttlc_onset, ttlc_onset_round) %>% 
+  mutate(TLC_onset_round = round(TLC_onset, digits = 1)) 
+  #select(TLC_onset, TLC_onset_round) %>% 
   
 ticks <- plot_data %>% 
-  select(ttlc_onset, ttlc_onset_round) %>% 
+  select(TLC_onset, TLC_onset_round) %>% 
   unique(.)
 
 
 censors <- data_RTs_cens %>%
   ungroup() %>% 
   filter(cogload == "noload") %>% 
-  mutate(xmin = ttlc_onset - .15,
-         xmax = ttlc_onset + .15) %>% 
-  select(ttlc_onset, onsettime, ttlc_end_of_trial, xmin, xmax) %>% 
-  group_by(ttlc_onset) %>% 
-  summarise(mineot = min(ttlc_end_of_trial)) 
-  #filter(ttlc_onset > 5 & ttlc_onset < 13)
+  mutate(xmin = TLC_onset - .15,
+         xmax = TLC_onset + .15) %>% 
+  select(TLC_onset, onsettime, TLC_end_of_trial, xmin, xmax) %>% 
+  group_by(TLC_onset) %>% 
+  summarise(mineot = min(TLC_end_of_trial)) 
+  #filter(TLC_onset > 5 & TLC_onset < 13)
 
 onsets <- c(5.375, 6)
-censor_lines <- lapply(onsets, function(x) ttlc_onset - (15 -x))
+censor_lines <- lapply(onsets, function(x) TLC_onset - (15 -x))
 
 
-censor_m <- lm(mineot ~ poly(ttlc_onset,3), data = censors)
+censor_m <- lm(mineot ~ poly(TLC_onset,3), data = censors)
 
-censor_predict <- stats::predict(object = censor_m, newdata = as.data.frame(ttlc_onset))
+censor_predict <- stats::predict(object = censor_m, newdata = as.data.frame(TLC_onset))
 
 censor_col = "#bcbd22"
 
-leg_v = .5 #vertical spacing
-leg_b = 5.5 #starting bottom
+leg_v = .6 #vertical spacing
+leg_b = 7 #starting bottom
 leg_l = 1 #left align
 leg_h = .35 #space between dot and text
 
-ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
+ribbon <- ggplot(preds, aes(x = TLC_onset)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dotted", col = "grey60") + #1:1 line
+  geom_abline(intercept = -1, slope = 1, linetype = "dotted", col = "grey60") + #1:1 line
+  annotate("text", x = 9.1, y = 9.4, label = "RT = 0 s", hjust = .5, vjust = 0, size = ansize, angle = 50, col = "grey60") +
+  annotate("text", x = 10.3, y = 8.5, label = "RT = 1 s", hjust = .5, vjust = 0, size = ansize, angle = 50, col = "grey60") +
+  
+  
   geom_ribbon(aes(ymin = Q2.25, ymax = Q97.75), fill = pred_col, col = NA, alpha = .1) + #99% band
   geom_ribbon(aes(ymin = Q15.85, ymax = Q84.15), fill = pred_col, alpha = .3) + #50% band
   geom_line(aes(y = Estimate), col = pred_col, size = 1.5) + #mean
   
   #  
-  geom_point(data = filter(data_RTs_cens, cogload == "noload", design == "random", premature == 0), aes(x = ttlc_onset, y= ttlc_takeover), alpha = .25, col = data_col, size = 1) + #raw data
-  geom_point(data = filter(plot_data, cogload == "noload", premature == 0), aes(x = ttlc_onset, y= ttlc_takeover, col = factor(ttlc_onset_round)), alpha = .25, size = 1) + #raw data
-  geom_abline(intercept = 0, slope = 1, linetype = 2, col = "grey40") + #1:1 line
+  geom_point(data = filter(data_RTs_cens, cogload == "noload", design == "random", premature == 0), aes(x = TLC_onset, y= TLC_takeover), alpha = .25, col = data_col, size = .75) + #raw data
+  geom_point(data = filter(plot_data, cogload == "noload", premature == 0), aes(x = TLC_onset, y= TLC_takeover, col = factor(TLC_onset_round)), alpha = .25, size = .75) + #raw data
   
-  geom_segment(data = censors, aes(x = ttlc_onset-.1, xend = ttlc_onset+.1, y = mineot, yend = mineot), size = 1, col = censor_col) +
+  
+  geom_segment(data = censors, aes(x = TLC_onset-.1, xend = TLC_onset+.1, y = mineot, yend = mineot), size = 1, col = censor_col) +
  
-  annotate("text", x = 13.45, y = 4.5, label = expression(mu), hjust = .5, vjust = 0, size = ansize) +
-  annotate("text", x = 13.45, y = 6, label = expression(mu*"+"*sigma), hjust = .5, vjust = 0, size = ansize) +
-  annotate("text", x = 13.45, y = 7.8, label = expression(mu*"+2"*sigma), hjust = .5, vjust = 0, size = ansize) +
+  annotate("text", x = 15.8, y = 5.5, label = expression(mu), hjust = .5, vjust = 0, size = ansize) +
+  annotate("text", x = 15.8, y = 3.8, label = expression(mu*"-"*sigma), hjust = .5, vjust = 0, size = ansize) +
+  annotate("text", x = 15.8, y = 1.5, label = expression(mu*"-2"*sigma), hjust = .5, vjust = 0, size = ansize) +
   
   #custom legend
-  annotate("point", x = leg_l, y= leg_b + (5*leg_v), col = balanced_cols[1], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (5*leg_v), label = "1.93 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("point", x = leg_l, y= leg_b + (5*leg_v), col = balanced_cols[1], shape = 20, size = 1) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (5*leg_v), label = "2.2 s", hjust = 0, vjust = .5, size = ansize) +
   
-  annotate("point", x = leg_l, y= leg_b + (4*leg_v), col = balanced_cols[2], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (4*leg_v), label = "4.21 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("point", x = leg_l, y= leg_b + (4*leg_v), col = balanced_cols[2], shape = 20, size = 1) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (4*leg_v), label = "4.7 s", hjust = 0, vjust = .5, size = ansize) +
   
-  annotate("point", x = leg_l, y= leg_b + (3*leg_v), col = balanced_cols[3], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (3*leg_v), label = "6.39 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("point", x = leg_l, y= leg_b + (3*leg_v), col = balanced_cols[3], shape = 20, size = 1) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (3*leg_v), label = "7.1 s", hjust = 0, vjust = .5, size = ansize) +
   
-  annotate("point", x = leg_l, y= leg_b + (2*leg_v), col = balanced_cols[4], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (2*leg_v), label = "8.37 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("point", x = leg_l, y= leg_b + (2*leg_v), col = balanced_cols[4], shape = 20, size = 1) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (2*leg_v), label = "9.6 s", hjust = 0, vjust = .5, size = ansize) +
   
-  annotate("point", x = leg_l, y= leg_b + (leg_v), col = pred_col, shape = 20, size = 2, alpa = .25) +
+  annotate("point", x = leg_l, y= leg_b + (leg_v), col = pred_col, shape = 20, size = 1) +
   annotate("text", x = leg_l+leg_h, y = leg_b + (leg_v), label = "Non-Repeated", hjust = 0, vjust = .5, size = ansize) +
   
-  geom_segment(aes(x = leg_l-.125, xend =leg_l + .125, y = leg_b, yend = leg_b), col = censor_col, size = 1.1) +
-  annotate("text", x =leg_l+leg_h, y = leg_b, label = expression("TTLC"["End"]), hjust = 0, vjust = .5, size = ansize) +
-  
+  geom_segment(aes(x = leg_l-.125, xend =leg_l + .125, y = leg_b, yend = leg_b), col = censor_col, size = 1) +
+  annotate("text", x =leg_l+leg_h, y = leg_b, label = expression("TLC"["End"]), hjust = 0, vjust = .5, size = ansize) +
   
   
   theme_classic() +
-  xlab(expression("TTLC"["Failure"]*" (s)")) + ylab(expression("TTLC"["Takeover"]*" (s)")) + 
-  coord_cartesian(xlim = c(0,13.25), ylim = c(-1,8)) +
-  #scale_x_continuous(breaks = ticks$ttlc_onset, labels = ticks$ttlc_onset_round) +
+  xlab(expression("TLC"["Failure"]*" (s)")) + ylab(expression("TLC"["Takeover"]*" (s)")) + 
+  coord_cartesian(xlim = c(0,16), ylim = c(-1,10)) +
+  scale_y_continuous(breaks = c(0,2.5,5,7.5,10), labels = c("0","2.5","5","7.5","10")) +
   scale_colour_manual(values = balanced_cols, guide = F) +
   theme_orca
 
 
 print(ribbon)
 
-ggsave("raw_predictive_noload.eps", plot = ribbon, dev = cairo_ps, width = 13.2, height = 8.5, units = "cm", dpi = 300)
+ggsave("raw_predictive_noload.eps", plot = ribbon, dev = cairo_ps, width = 8.7, height = 7, units = "cm", dpi = 300)
 
 
 ```
 
 ```{r, coefficients plot mu}
 
-pars = c("b_Intercept", "b_ttlc_onset", "b_cogloadload", "b_ttlc_onset:cogloadload", "sd_ppid__Intercept", "sd_ppid__ttlc_onset", "sd_ppid__cogloadload", "sd_ppid__ttlc_onset:cogloadload")
+pars = c("b_Intercept", "b_TLC_onset", "b_cogloadload", "b_TLC_onset:cogloadload", "sd_ppid__Intercept", "sd_ppid__TLC_onset", "sd_ppid__cogloadload", "sd_ppid__TLC_onset:cogloadload")
 
 breaks = c(parse(text = TeX('$\\beta_{\\mu 0}$')),
            parse(text = TeX('$\\beta_{\\mu TF}$')),
@@ -325,12 +339,12 @@ draws_coef <- MOD %>%
   gather(key = "b", value = "estimate") %>% 
   group_by(b) %>% 
   mean_hdi() %>% 
-  mutate(b = fct_relevel(b, "b_Intercept", "b_ttlc_onset", "b_cogloadload", "b_ttlc_onset:cogloadload", "sd_ppid__Intercept", "sd_ppid__ttlc_onset", "sd_ppid__cogloadload", "sd_ppid__ttlc_onset:cogloadload")) %>% 
+  mutate(b = fct_relevel(b, "b_Intercept", "b_TLC_onset", "b_cogloadload", "b_TLC_onset:cogloadload", "sd_ppid__Intercept", "sd_ppid__TLC_onset", "sd_ppid__cogloadload", "sd_ppid__TLC_onset:cogloadload")) %>% 
   arrange(b)
 
 
 p_coef <- MOD %>% 
-  posterior_samples(., pars = c("b_cogloadload","b_ttlc_onset:cogloadload")) %>% 
+  posterior_samples(., pars = c("b_cogloadload","b_TLC_onset:cogloadload")) %>% 
   p_direction() 
 
 
@@ -357,9 +371,9 @@ ggsave("mu_coefficients.eps", plot = forest_mu, dev = cairo_ps, width = 13.2, he
 ```{r, coefficients plot sigma}
 
 
-pars = c("b_sigma_Intercept", "b_sigma_logttlc_onset",
-               "b_sigma_cogloadload", "sd_ppid__sigma_Intercept", "sd_ppid__sigma_logttlc_onset",
-               "sd_ppid__sigma_cogloadload")# "b_sigma_ttlc_onset:cogloadload")
+pars = c("b_sigma_Intercept", "b_sigma_logTLC_onset",
+               "b_sigma_cogloadload", "sd_ppid__sigma_Intercept", "sd_ppid__sigma_logTLC_onset",
+               "sd_ppid__sigma_cogloadload")# "b_sigma_TLC_onset:cogloadload")
 
 
 breaks = c(parse(text = TeX('$\\beta_{\\sigma 0}$')),
@@ -371,17 +385,21 @@ breaks = c(parse(text = TeX('$\\beta_{\\sigma 0}$')),
            
 draws_coef_sig <- MOD %>% 
   posterior_samples(., pars = pars) %>% 
-  gather(key = "b", value = "estimate") %>% 
+  gather(key = "b", value = "estimate") %>%  
   group_by(b) %>% 
   mean_hdi() %>% 
-  mutate(b = fct_relevel(b, "b_sigma_Intercept", "b_sigma_logttlc_onset",
-               "b_sigma_cogloadload", "sd_ppid__sigma_Intercept", "sd_ppid__sigma_logttlc_onset",
+  mutate(b = fct_relevel(b, "b_sigma_Intercept", "b_sigma_logTLC_onset",
+               "b_sigma_cogloadload", "sd_ppid__sigma_Intercept", "sd_ppid__sigma_logTLC_onset",
                "sd_ppid__sigma_cogloadload")) %>% 
   arrange(b)
 
+p_coef <- MOD %>% 
+  posterior_samples(., pars = c("b_cogloadload","b_sigma_cogloadload")) %>% 
+  p_direction() 
+
 
 print(draws_coef_sig)
-draws_coef_sig$type <- c("f","f","f","r","r","r","r")
+draws_coef_sig$type <- c("f","f","f","r","r","r")
 
 exp_coef <- draws_coef_sig
 exp_coef[1,2:4] <- exp(exp_coef[1,2:4])
@@ -403,7 +421,7 @@ print(forest_sigma)
 
 
 coef_plot <- plot_grid(forest_mu, forest_sigma, ncol =2, labels = c("A","B"), label_size = 12)
-ggsave("ttlc_coefficients.eps", plot = coef_plot, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
+ggsave("TLC_coefficients.eps", plot = coef_plot, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
 
 
 
@@ -421,12 +439,12 @@ twosd.l = .5 - (twosd/2)
 twosd.u = .5 + (twosd/2)
 
 
-ttlc_onset <- seq(1, to = 17, by = .5)
+TLC_onset <- seq(1, to = 17, by = .5)
 cogload <- c("noload","load")
-pred_list <- expand_grid(ttlc_onset, cogload)
+pred_list <- expand_grid(TLC_onset, cogload)
 preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
   cbind(pred_list) %>%
-  group_by(ttlc_onset, cogload) %>% 
+  group_by(TLC_onset, cogload) %>% 
   mutate(Estimate = mean(Estimate),
          Q2.25 = min(Q2.25),
          Q15.85 = min(Q15.85),
@@ -434,21 +452,24 @@ preds <- predict(MOD, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, 
          Q97.75 = max(Q97.75))
 
 
-pred_ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
+nld_xy = c(4,.6) #xy for label
+ld_xy = c(6,.4)
+
+pred_ribbon <- ggplot(preds, aes(x = TLC_onset)) +
   geom_ribbon(aes(ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1) + #99% band
   geom_ribbon(aes(ymin = Q15.85, ymax = Q84.15, fill = cogload), col = NA, alpha = .3) + #50% band
   
 
-  annotate("text", x = 2.5, y = -.5, label = expression(mu*"-2"*sigma), hjust = .6, vjust = .7, size = ansize, col = cogload_cols[1]) +
-  annotate("segment", x = 3, xend = 4, y = -.4, yend = .15, colour = cogload_cols[1], size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
-  annotate("text",  x = 5, y = -.8, label = expression(mu*"-2"*sigma), hjust = .6, vjust = .7, size = ansize, col = cogload_cols[2]) +
-  annotate("segment", x = 5.5, xend = 6.2, y = -.65, yend = -.5, colour = cogload_cols[2], size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  annotate("text", x = nld_xy[1]-1.25, y = nld_xy[2]-.7, label = expression(mu*"-2"*sigma), hjust = .6, vjust = .7, size = ansize, col = cogload_cols[1]) +
+  annotate("segment", x = nld_xy[1]-1, xend = nld_xy[1], y = nld_xy[2]-.5, yend = nld_xy[2], colour = cogload_cols[1], size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  annotate("text",  x = ld_xy[1]-1.25, y = ld_xy[2]-.7, label = expression(mu*"-2"*sigma), hjust = .6, vjust = .7, size = ansize, col = cogload_cols[2]) +
+  annotate("segment", x = ld_xy[1]-1, xend = ld_xy[1], y = ld_xy[2]-.5, yend = ld_xy[2], colour = cogload_cols[2], size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
   
   geom_line(aes(y = Estimate, col = cogload), size = 1) + #mean
   scale_color_manual(values = rev(cogload_cols), guide = guide_legend(reverse = TRUE), labels = c('SupAuto+ACMT', 'SupAuto')) + 
   scale_fill_manual(values = rev(cogload_cols)) + guides(fill = FALSE) +
   theme_classic() +
-  xlab(expression("TTLC"["Failure"]*" (s)")) + ylab(expression("TTLC"["Takeover"]*" (s)")) +
+  xlab(expression("TLC"["Failure"]*" (s)")) + ylab(expression("TLC"["Takeover"]*" (s)")) +
   coord_cartesian(ylim = c(-1,8), xlim = c(0,13)) +
   theme(legend.position = c(0.3, 0.8),
         legend.title = element_blank(),
@@ -458,7 +479,7 @@ pred_ribbon <- ggplot(preds, aes(x = ttlc_onset)) +
 print(pred_ribbon)
 ```
 
-```{r, appendix plot}
+```{r, appendix plot pp_checks, fig.width = 5.2, fig.height= 2.4}
 
 balanced_data <- filter(data_RTs_cens, design == "balanced")
 preds <- balanced_data %>% 
@@ -466,20 +487,23 @@ preds <- balanced_data %>%
 
 uniq <- balanced_data %>% 
   ungroup() %>% 
-  arrange(ttlc_onset) %>% 
-  select(ttlc_onset) %>% 
+  arrange(TLC_onset) %>% 
+  select(TLC_onset) %>% 
   unique(.)
 dat_titles<- data.frame(
   label = c(" 1.93 s", "4.21 s", "6.38 s", "8.37 s"),
-  ttlc_onset = uniq$ttlc_onset)
+  TLC_onset = uniq$TLC_onset)
 
 
-noload_pp_checks <- ggplot(filter(balanced_data, cogload == "noload"), aes(x = ttlc_takeover, y = ..density..)) + 
-  geom_density_ridges(data = filter(preds, cogload == "noload"), aes(x = .prediction, col = factor(ttlc_onset)), size = 1, rel_min_height = .005) +
-  geom_histogram(aes(fill = factor(ttlc_onset)), alpha = .75, position = "identity", bins = 50) +
+cogload.names = c("SupAuto","SupAuto+ACMT")
+names(cogload.names) = c("noload","load")
+
+noload_pp_checks <- ggplot(filter(balanced_data, cogload == "noload"), aes(x = TLC_takeover, y = ..density..)) + 
+  geom_density_ridges(data = filter(preds, cogload == "noload"), aes(x = .prediction, col = factor(TLC_onset)), size = 1, rel_min_height = .005) +
+  geom_histogram(aes(fill = factor(TLC_onset)), alpha = .5, position = "identity", bins = 50) +
   scale_colour_manual(values = balanced_cols, guide = F) +
   scale_fill_manual(values = balanced_cols, guide = F) +
-  coord_cartesian(xlim = c(0, 8), clip= "off") +
+  coord_cartesian(xlim = c(0, 7), clip= "off") +
   theme_classic() +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
@@ -488,36 +512,35 @@ noload_pp_checks <- ggplot(filter(balanced_data, cogload == "noload"), aes(x = t
   theme_orca +
    
   ylab("Density") +
-  xlab(expression("TTLC"["Takeover"]*" (s)"))
+  xlab(expression("TLC"["Takeover"]*" (s)"))
 
-load_pp_checks <- ggplot(filter(balanced_data, cogload == "load"), aes(x = ttlc_takeover, y = ..density..)) + 
-  geom_density_ridges(data = filter(preds, cogload == "load"), aes(x = .prediction, col = factor(ttlc_onset)), size = 1, rel_min_height = .005) +
-  geom_histogram(aes(fill = factor(ttlc_onset)), alpha = .75, position = "identity", bins = 50) +
+load_pp_checks <- ggplot(filter(balanced_data, cogload == "load"), aes(x = TLC_takeover, y = ..density..)) + 
+  geom_density_ridges(data = filter(preds, cogload == "load"), aes(x = .prediction, col = factor(TLC_onset)), size = 1, rel_min_height = .005) +
+  geom_histogram(aes(fill = factor(TLC_onset)), alpha = .5, position = "identity", bins = 50) +
   
-  facet_wrap(~ttlc_onset) +
   scale_colour_manual(values = balanced_cols, guide = F) +
   scale_fill_manual(values = balanced_cols, guide = F) +
-  coord_cartesian(xlim = c(0, 8), clip= "off") +
+  coord_cartesian(xlim = c(0, 7), clip= "off") +
   theme_classic() +
-  facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return(""))) +
+  #facet_wrap(~TLC_onset, labeller = as_labeller(function(x)return(""))) +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
        panel.grid = element_blank(),
        strip.background = element_blank()) +
   theme_orca +
-    geom_text(data = dat_titles, aes(x = 4, y = Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols) +
+    #geom_text(data = dat_titles, aes(x = 4, y = Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols) +
   ylab("Density") +
-  xlab(expression("TTLC"["Takeover"]*" (s)")) 
+  xlab(expression("TLC"["Takeover"]*" (s)")) 
   
 
-full_pp_checks <- ggplot(balanced_data, aes(x = ttlc_takeover, y = ..density..)) + 
+full_pp_checks <- ggplot(balanced_data, aes(x = TLC_takeover, y = ..density..)) + 
   geom_density_ridges(data = preds, aes(x = .prediction, col = factor(cogload)), size = 1, rel_min_height = .01) +
   geom_histogram(aes(fill = factor(cogload)), alpha = .5, position = "identity", bins = 50) +
   scale_fill_manual(values = cogload_cols, labels =rev(c('SupAuto+ACMT', 'SupAuto')), guide = FALSE) +
   scale_color_manual(values = cogload_cols, labels =rev(c('SupAuto+ACMT', 'SupAuto')), guide = FALSE) +
   coord_cartesian( clip= "off") +
   theme_classic() +
-  facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return("")), scales = "free") +
+  facet_wrap(~TLC_onset, labeller = as_labeller(function(x)return("")), scales = "free") +
   
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
@@ -526,27 +549,64 @@ full_pp_checks <- ggplot(balanced_data, aes(x = ttlc_takeover, y = ..density..))
   theme_orca +
     geom_text(data = dat_titles, aes(x = 4, y = Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols) +
   ylab("Density") +
-  xlab(expression("TTLC"["Takeover"]*" (s)"))
+  xlab(expression("TLC"["Takeover"]*" (s)"))
 
-print(full_pp_checks)
 
-print(noload_pp_checks)
-print(load_pp_checks)
+leg_v = .15 #vertical spacing
+leg_b = 1 #starting bottom
+leg_l = 5 #left align
+leg_h = .35 #space between dot and text
 
-p_ppchecks <- plot_grid(noload_pp_checks, load_pp_checks, ncol = 2, labels = c("A","B"), label_size = 12)
-print(p_ppchecks)
+pp_checks_v2 <- ggplot(balanced_data, aes(x = TLC_takeover, y = ..density..)) + 
+  geom_density_ridges(data = preds, aes(x = .prediction, col = factor(TLC_onset)), size = 1, rel_min_height = .005) +
+  geom_histogram(aes(fill = factor(TLC_onset)), alpha = .5, position = "identity", bins = 50) +
+  scale_colour_manual(values = balanced_cols, guide = F) +
+  scale_fill_manual(values = balanced_cols, guide = F) +
+  coord_cartesian(xlim = c(0, 7), clip= "off") +
+  theme_classic() +
+  facet_grid(.~cogload, labeller = labeller(cogload = cogload.names))+
+  theme(panel.border = element_blank(), 
+       panel.background = element_blank(), 
+       panel.grid = element_blank(),
+       strip.background = element_blank()) +
+  theme_orca +
+  #custom legend
+  annotate("point", x = leg_l, y= leg_b + (5*leg_v), col = balanced_cols[1], shape = 15, size = 2) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (5*leg_v), label = "2.2 s", hjust = 0, vjust = .4, size = ansize) +
+  
+  annotate("point", x = leg_l, y= leg_b + (4*leg_v), col = balanced_cols[2], shape = 15, size = 2) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (4*leg_v), label = "3.7 s", hjust = 0, vjust = .4, size = ansize) +
+  
+  annotate("point", x = leg_l, y= leg_b + (3*leg_v), col = balanced_cols[3], shape = 15, size = 2) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (3*leg_v), label = "7.1 s", hjust = 0, vjust = .4, size = ansize) +
+  
+  annotate("point", x = leg_l, y= leg_b + (2*leg_v), col = balanced_cols[4], shape = 15, size = 2) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (2*leg_v), label = "9.6 s", hjust = 0, vjust = .4, size = ansize) +
+  
+   
+  ylab("Density") +
+  xlab(expression("TLC"["Takeover"]*" (s)"))
 
-ggsave("ttlc_ppchecks.eps", plot = p_ppchecks, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
+print(pp_checks_v2)
+
+#print(full_pp_checks)
+
+#print(noload_pp_checks)
+#print(load_pp_checks)
+
+#p_ppchecks <- plot_grid(noload_pp_checks, load_pp_checks, nrow = 2, labels = c("A","B"), label_size = 12)
+#print(p_ppchecks)
+
+ggsave("TLC_ppchecks.eps", plot = pp_checks_v2, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
 
 
 ```
 
 
-
 ```{r, functions for predicting random effect distributions, minus estimation uncertainty}
 
 #predictive distribution of map and sigma for single row of parameters (so you can choose to include uncertainty or not)
-predict_condition_dpars_fixed <- function(row, ttlc_onset){
+predict_condition_dpars_fixed <- function(row, TLC_onset){
   
   
   #########
@@ -554,36 +614,36 @@ predict_condition_dpars_fixed <- function(row, ttlc_onset){
   # by construction all the coefficients in each model have estimated sds and correlations with one another
   # here we formulate a covariance matrix then simulate a predictive distribution of coefficients for both mu and sigma.
   
-  # mu = b_Intercept + b_ttlc_onset*ttlc_onset + b_cogloadload * cogload + b_ttlc_onset:cogloadload * ttlc_onset*cogload
+  # mu = b_Intercept + b_TLC_onset*TLC_onset + b_cogloadload * cogload + b_TLC_onset:cogloadload * TLC_onset*cogload
   
-  #log(sigma) = b_sigma_Intercept + b_sigma_logttlc_onset*log(ttlc_onset) + b_sigma_cogloadload*cogload
+  #log(sigma) = b_sigma_Intercept + b_sigma_logTLC_onset*log(TLC_onset) + b_sigma_cogloadload*cogload
   #########
   row <- select(row, starts_with('b'))
   mu_dist <- row
   sig_dist <- row
   
-    for (to in ttlc_onset){
+    for (to in TLC_onset){
       varname <- paste(to, "load", sep="_")
     
-    mu_dist[[varname]] <- with(row, b_Intercept + b_ttlc_onset*to + b_cogloadload*1 + `b_ttlc_onset.cogloadload`*(to*1))
-    sig_dist[[varname]] <- with(row, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*1)
+    mu_dist[[varname]] <- with(row, b_Intercept + b_TLC_onset*to + b_cogloadload*1 + `b_TLC_onset.cogloadload`*(to*1))
+    sig_dist[[varname]] <- with(row, b_sigma_Intercept + b_sigma_logTLC_onset*log(to) + b_sigma_cogloadload*1)
     
     
     varname <- paste(to, "noload", sep="_")
-    mu_dist[[varname]] <- with(row, b_Intercept + b_ttlc_onset*to + b_cogloadload*0 + `b_ttlc_onset.cogloadload`*(to*0))
-    sig_dist[[varname]] <- with(row, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*0)
+    mu_dist[[varname]] <- with(row, b_Intercept + b_TLC_onset*to + b_cogloadload*0 + `b_TLC_onset.cogloadload`*(to*0))
+    sig_dist[[varname]] <- with(row, b_sigma_Intercept + b_sigma_logTLC_onset*log(to) + b_sigma_cogloadload*0)
   }
       
       
   mu_long <- mu_dist %>% 
     pivot_longer(-starts_with('b'),
-                 names_to = c("ttlc_onset","cogload"),
+                 names_to = c("TLC_onset","cogload"),
                  names_sep = "_",
                  values_to = "mu")
   
   sig_long <- sig_dist %>% 
     pivot_longer(-starts_with('b'),
-                 names_to = c("ttlc_onset","cogload"),
+                 names_to = c("TLC_onset","cogload"),
                  names_sep = "_",
                  values_to = "sigma")
   
@@ -605,56 +665,56 @@ predict_coeff_dist <- function(row, nsamples){
   # by construction all the coefficients in each model have estimated sds and correlations with one another
   # here we formulate a covariance matrix then simulate a predictive distribution of coefficients for both mu and sigma.
   
-  # mu = b_Intercept + b_ttlc_onset*ttlc_onset + b_cogloadload * cogload + b_ttlc_onset:cogloadload * ttlc_onset*cogload
+  # mu = b_Intercept + b_TLC_onset*TLC_onset + b_cogloadload * cogload + b_TLC_onset:cogloadload * TLC_onset*cogload
   
-  #log(sigma) = b_sigma_Intercept + b_sigma_logttlc_onset*log(ttlc_onset) + b_sigma_cogloadload*cogload
+  #log(sigma) = b_sigma_Intercept + b_sigma_logTLC_onset*log(TLC_onset) + b_sigma_cogloadload*cogload
   #########
   
 
   
   #### mu #####
   #intercept
-  cov_int_to <- with(row, sd_ppid__Intercept*sd_ppid__ttlc_onset*cor_ppid__Intercept__ttlc_onset)
+  cov_int_to <- with(row, sd_ppid__Intercept*sd_ppid__TLC_onset*cor_ppid__Intercept__TLC_onset)
   cov_int_cl <- with(row, sd_ppid__Intercept*sd_ppid__cogloadload*cor_ppid__Intercept__cogloadload)
-  cov_int_to.cl <- with(row, sd_ppid__Intercept*sd_ppid__ttlc_onset.cogloadload*cor_ppid__Intercept__ttlc_onset.cogloadload)
+  cov_int_to.cl <- with(row, sd_ppid__Intercept*sd_ppid__TLC_onset.cogloadload*cor_ppid__Intercept__TLC_onset.cogloadload)
   
-  #ttlc
-  cov_to_cl <- with(row,sd_ppid__ttlc_onset*sd_ppid__cogloadload*cor_ppid__ttlc_onset__cogloadload)
-  cov_to_to.cl <- with(row,sd_ppid__ttlc_onset*sd_ppid__ttlc_onset.cogloadload*cor_ppid__ttlc_onset__ttlc_onset.cogloadload)
+  #TLC
+  cov_to_cl <- with(row,sd_ppid__TLC_onset*sd_ppid__cogloadload*cor_ppid__TLC_onset__cogloadload)
+  cov_to_to.cl <- with(row,sd_ppid__TLC_onset*sd_ppid__TLC_onset.cogloadload*cor_ppid__TLC_onset__TLC_onset.cogloadload)
   
   #cl
-  cov_cl_to.cl <- with(row, sd_ppid__cogloadload*sd_ppid__ttlc_onset.cogloadload*cor_ppid__cogloadload__ttlc_onset.cogloadload)
+  cov_cl_to.cl <- with(row, sd_ppid__cogloadload*sd_ppid__TLC_onset.cogloadload*cor_ppid__cogloadload__TLC_onset.cogloadload)
   
   
   cov_mat_mu = with(row, matrix(
     c(sd_ppid__Intercept^2, cov_int_to, cov_int_cl, cov_int_to.cl,
-      cov_int_to, sd_ppid__ttlc_onset^2, cov_to_cl, cov_to_to.cl,
+      cov_int_to, sd_ppid__TLC_onset^2, cov_to_cl, cov_to_to.cl,
       cov_int_cl, cov_to_cl, sd_ppid__cogloadload^2, cov_cl_to.cl,
-      cov_int_to.cl, cov_to_to.cl, cov_cl_to.cl, sd_ppid__ttlc_onset.cogloadload^2), ncol = 4))
+      cov_int_to.cl, cov_to_to.cl, cov_cl_to.cl, sd_ppid__TLC_onset.cogloadload^2), ncol = 4))
   
   
   #print(cov_mat_mu)
-  mu_dist <- as.data.frame(MASS::mvrnorm(nsamples, c(row$b_Intercept, row$b_ttlc_onset, row$b_cogloadload, row$b_ttlc_onset.cogloadload), cov_mat_mu))
+  mu_dist <- as.data.frame(MASS::mvrnorm(nsamples, c(row$b_Intercept, row$b_TLC_onset, row$b_cogloadload, row$b_TLC_onset.cogloadload), cov_mat_mu))
   
-  colnames(mu_dist) <- c("b_Intercept","b_ttlc_onset","b_cogloadload","b_ttlc_onset.cogloadload")
+  colnames(mu_dist) <- c("b_Intercept","b_TLC_onset","b_cogloadload","b_TLC_onset.cogloadload")
   mu_dist$pp <- 1:nsamples
   
   #### sigma ####
   
   #intercept
-  cov_int_to <- with(row, sd_ppid__sigma_Intercept*sd_ppid__sigma_logttlc_onset*cor_ppid__sigma_Intercept__sigma_logttlc_onset)
+  cov_int_to <- with(row, sd_ppid__sigma_Intercept*sd_ppid__sigma_logTLC_onset*cor_ppid__sigma_Intercept__sigma_logTLC_onset)
   cov_int_cl <- with(row, sd_ppid__sigma_Intercept*sd_ppid__sigma_cogloadload*cor_ppid__sigma_Intercept__sigma_cogloadload)
-  cov_to_cl <- with(row,sd_ppid__sigma_logttlc_onset*sd_ppid__sigma_cogloadload*cor_ppid__sigma_logttlc_onset__sigma_cogloadload)
+  cov_to_cl <- with(row,sd_ppid__sigma_logTLC_onset*sd_ppid__sigma_cogloadload*cor_ppid__sigma_logTLC_onset__sigma_cogloadload)
   
   cov_mat_sig = with(row, matrix(
     c(sd_ppid__sigma_Intercept^2, cov_int_to, cov_int_cl, 
-      cov_int_to, sd_ppid__sigma_logttlc_onset^2, cov_to_cl, 
+      cov_int_to, sd_ppid__sigma_logTLC_onset^2, cov_to_cl, 
       cov_int_cl, cov_to_cl, sd_ppid__sigma_cogloadload^2), ncol = 3))
   
   
-  sig_dist <- as.data.frame(MASS::mvrnorm(nsamples, c(row$b_sigma_Intercept, row$b_sigma_logttlc_onset, row$b_sigma_cogloadload), cov_mat_sig))
+  sig_dist <- as.data.frame(MASS::mvrnorm(nsamples, c(row$b_sigma_Intercept, row$b_sigma_logTLC_onset, row$b_sigma_cogloadload), cov_mat_sig))
   
-  colnames(sig_dist) <- c("b_sigma_Intercept","b_sigma_logttlc_onset","b_sigma_cogloadload")
+  colnames(sig_dist) <- c("b_sigma_Intercept","b_sigma_logTLC_onset","b_sigma_cogloadload")
   sig_dist$pp <- 1:nsamples
   
   #return for two distributions here here.
@@ -663,33 +723,33 @@ predict_coeff_dist <- function(row, nsamples){
 }
   
   
-predict_condition_dpars <- function(ttlc_onset, coef_dists){   
+predict_condition_dpars <- function(TLC_onset, coef_dists){   
   
   mu_dist <- coef_dists[[1]]
   sig_dist <- coef_dists[[2]]
   
-  for (to in ttlc_onset){
+  for (to in TLC_onset){
     varname <- paste(to, "load", sep="_")
     
-    mu_dist[[varname]] <- with(mu_dist, b_Intercept + b_ttlc_onset*to + b_cogloadload*1 + `b_ttlc_onset.cogloadload`*(to*1))
-    sig_dist[[varname]] <- with(sig_dist, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*1)
+    mu_dist[[varname]] <- with(mu_dist, b_Intercept + b_TLC_onset*to + b_cogloadload*1 + `b_TLC_onset.cogloadload`*(to*1))
+    sig_dist[[varname]] <- with(sig_dist, b_sigma_Intercept + b_sigma_logTLC_onset*log(to) + b_sigma_cogloadload*1)
     
     
     varname <- paste(to, "noload", sep="_")
-    mu_dist[[varname]] <- with(mu_dist, b_Intercept + b_ttlc_onset*to + b_cogloadload*0 + `b_ttlc_onset.cogloadload`*(to*0))
-    sig_dist[[varname]] <- with(sig_dist, b_sigma_Intercept + b_sigma_logttlc_onset*log(to) + b_sigma_cogloadload*0)
+    mu_dist[[varname]] <- with(mu_dist, b_Intercept + b_TLC_onset*to + b_cogloadload*0 + `b_TLC_onset.cogloadload`*(to*0))
+    sig_dist[[varname]] <- with(sig_dist, b_sigma_Intercept + b_sigma_logTLC_onset*log(to) + b_sigma_cogloadload*0)
   }
       
       
   mu_long <- mu_dist %>% 
     pivot_longer(-c(starts_with('b'),'pp'),
-                 names_to = c("ttlc_onset","cogload"),
+                 names_to = c("TLC_onset","cogload"),
                  names_sep = "_",
                  values_to = "mu")
   
   sig_long <- sig_dist %>% 
     pivot_longer(-c(starts_with('b'),'pp'),
-                 names_to = c("ttlc_onset","cogload"),
+                 names_to = c("TLC_onset","cogload"),
                  names_sep = "_",
                  values_to = "sigma")
   
@@ -702,7 +762,7 @@ predict_condition_dpars <- function(ttlc_onset, coef_dists){
 }
   
 
-simulate_ttlctakeovers <- function(dpar_dists, nobs = 10){
+simulate_TLCtakeovers <- function(dpar_dists, nobs = 10){
   #simulate participants. since mu and sigma are considered independent in the model, just randomly draw from them separately
   mu_long <- dpar_dists[[1]]
   sig_long <- dpar_dists[[2]]
@@ -711,7 +771,7 @@ simulate_ttlctakeovers <- function(dpar_dists, nobs = 10){
   #for each participant you want to sample n obs at the conditions.
   obs <- rnorm(nrow(mu_long)*nobs, mu_long$mu, mu_long$sigma)
   full_df <- cbind(mu_long, matrix(obs, nrow = nrow(mu_long), byrow = FALSE))
-  full_df$ttlc_onset <- as.numeric(full_df$ttlc_onset)
+  full_df$TLC_onset <- as.numeric(full_df$TLC_onset)
   return(full_df)
 }
 
@@ -720,14 +780,14 @@ quantile_range <- function(full_df, quantiles){
   
   df <- full_df %>% 
     pivot_longer(matches("^[[:digit:]]+"),
-                 values_to = "ttlc_takeover") %>% 
-    filter(ttlc_takeover < ttlc_onset) %>% #truncated dist
-    group_by(ttlc_onset, cogload) %>% 
-    summarise(q1 = quantile(ttlc_takeover, quantiles[1]),
-              q2 = quantile(ttlc_takeover, quantiles[2]),
+                 values_to = "TLC_takeover") %>% 
+    filter(TLC_takeover < TLC_onset) %>% #truncated dist
+    group_by(TLC_onset, cogload) %>% 
+    summarise(q1 = quantile(TLC_takeover, quantiles[1]),
+              q2 = quantile(TLC_takeover, quantiles[2]),
               range95 = q2 - q1,
-              stdev = sd(ttlc_takeover),
-              mn = mean(ttlc_takeover),
+              stdev = sd(TLC_takeover),
+              mn = mean(TLC_takeover),
               cv = stdev/mn)
   
   return(df)
@@ -739,33 +799,33 @@ quantile_range <- function(full_df, quantiles){
 avg_pcross <- function(dpar_dists, tt = 0){
   
   #for each participant (randomly drawn mu and sigma) calculate a pcross.
-  #tt is the ttlc at takeover. default is zero, meaning that they takeover precisely on the road edge so will exit the road.
+  #tt is the TLC at takeover. default is zero, meaning that they takeover precisely on the road edge so will exit the road.
   mu_long <- dpar_dists[[1]]
   sig_long <- dpar_dists[[2]]
   
   mu_long$sigma <- sig_long$sigma
   mu_long <- mu_long %>% 
-    group_by(pp, ttlc_onset, cogload) %>% 
+    group_by(pp, TLC_onset, cogload) %>% 
     mutate(pcross = pnorm(tt, mu, sigma))
   
   
   pcross_avg <- mu_long %>% 
     ungroup() %>% 
-    group_by(ttlc_onset, cogload) %>% 
+    group_by(TLC_onset, cogload) %>% 
     summarise(pcross = mean(pcross, na.rm = TRUE))
-  pcross_avg$ttlc_onset <- as.double(pcross_avg$ttlc_onset)
+  pcross_avg$TLC_onset <- as.double(pcross_avg$TLC_onset)
   
   return(pcross_avg)
 }
 
 
-simulate_pcross <- function(samples, tt = 0, ttlc_onset = seq(.1, to = 15, by = .5)){
+simulate_pcross <- function(samples, tt = 0, TLC_onset = seq(.1, to = 20, by = .1)){
   time <- Sys.time()
   for (row in 1:nrow(samples)) {
     print(row)
     simrow <- samples[row,]
     row_dists <- predict_coeff_dist(simrow, 500) #simulate driver coefficients.
-    row_dpars <- predict_condition_dpars(ttlc_onset, row_dists) #simulate mean and sd for each condition predicted   from regmodel
+    row_dpars <- predict_condition_dpars(TLC_onset, row_dists) #simulate mean and sd for each condition predicted   from regmodel
     
     
     
@@ -782,7 +842,7 @@ simulate_pcross <- function(samples, tt = 0, ttlc_onset = seq(.1, to = 15, by = 
   print(Sys.time() - time)  
   
   pc <- pc %>% 
-  pivot_longer(-c('ttlc_onset','cogload','pcross'),
+  pivot_longer(-c('TLC_onset','cogload','pcross'),
                names_to = c("draw","tminus"),
                names_sep = "_",
                values_to = "val")
@@ -799,13 +859,13 @@ twosd.l = .5 - (twosd/2)
 twosd.u = .5 + (twosd/2)
 
 
-ttlc_onset <- seq(.25, to = 15, by = .25)
-#mean_censoring <- ttlc_onset - (15 - avg_onset)
-#censor <- data.frame(ttlc_onset, mean_censoring)
+TLC_onset <- seq(.25, to = 15, by = .25)
+#mean_censoring <- TLC_onset - (15 - avg_onset)
+#censor <- data.frame(TLC_onset, mean_censoring)
 #ppid <- 1:20
 cogload <- c("noload","load")
 
-pred_list <- expand_grid(ttlc_onset, cogload)
+pred_list <- expand_grid(TLC_onset, cogload)
 
 #range (FIXED EFFECTS)
 map_sig <- fitted(MOD, newdata=pred_list, summary=TRUE, re_formula = NA, dpar = "sigma") %>% 
@@ -830,21 +890,21 @@ med_params <- mymeds %>%
               values_from = "med")
 
 coef_dists <- predict_coeff_dist(med_params, 1000) #coefficients.
-condition_dpars <- predict_condition_dpars(ttlc_onset, coef_dists) #dpars predicted from regmodel
-obs <- simulate_ttlctakeovers(condition_dpars, nobs = 100) 
+condition_dpars <- predict_condition_dpars(TLC_onset, coef_dists) #dpars predicted from regmodel
+obs <- simulate_TLCtakeovers(condition_dpars, nobs = 100) 
 raneff_range <- quantile_range(obs, c(twosd.l, twosd.u))
 
 
-dpars_fixed <- predict_condition_dpars_fixed(med_params, ttlc_onset)
+dpars_fixed <- predict_condition_dpars_fixed(med_params, TLC_onset)
 sig_fixed <- dpars_fixed[[2]] %>% 
   mutate(range95 = sigma*4)
-sig_fixed$ttlc_onset <- as.numeric(sig_fixed$ttlc_onset)
+sig_fixed$TLC_onset <- as.numeric(sig_fixed$TLC_onset)
 sig_fixed$mu <- dpars_fixed[[1]]$mu
 sig_fixed <- sig_fixed %>% 
   mutate(cv = sigma /mu)
-obs_fixed <- simulate_ttlctakeovers(dpars_fixed, nobs = 10000)
+obs_fixed <- simulate_TLCtakeovers(dpars_fixed, nobs = 10000)
 fixeff_range <- quantile_range(obs_fixed, c(twosd.l, twosd.u))
-fixeff_range$ttlc_onset <- as.numeric(fixeff_range$ttlc_onset)
+fixeff_range$TLC_onset <- as.numeric(fixeff_range$TLC_onset)
 
 
 print(quantile(rnorm(10000), twosd.l))
@@ -852,7 +912,7 @@ print(quantile(rnorm(10000), twosd.l))
 
 #FULL PREDICTIVE (FIXED + RANDOM + UNCERTAINTY) 
 ppid <- seq(50,100)
-pred_list_new <- expand_grid(ttlc_onset, cogload, ppid)
+pred_list_new <- expand_grid(TLC_onset, cogload, ppid)
 
 pp_range <- predict(MOD, newdata=pred_list_new, summary=FALSE, allow_new_levels = TRUE, probs = c(twosd.l, twosd.u), sample_new_levels = "gaussian", nsamples = 9000) %>% 
   t() %>% 
@@ -861,23 +921,23 @@ pp_range <- predict(MOD, newdata=pred_list_new, summary=FALSE, allow_new_levels 
 
 pp_quantiles <- pp_range %>% 
    pivot_longer(matches("^[[:digit:]]+"),
-                 values_to = "ttlc_takeover") %>% 
-    group_by(ttlc_onset, cogload) %>% 
-    summarise(q1 = quantile(ttlc_takeover, twosd.l, na.rm = TRUE),
-              q2 = quantile(ttlc_takeover, twosd.u, na.rm = TRUE),
+                 values_to = "TLC_takeover") %>% 
+    group_by(TLC_onset, cogload) %>% 
+    summarise(q1 = quantile(TLC_takeover, twosd.l, na.rm = TRUE),
+              q2 = quantile(TLC_takeover, twosd.u, na.rm = TRUE),
               range95 = q2 - q1,
-              stdev = sd(ttlc_takeover, na.rm = TRUE),
-              mn = mean(ttlc_takeover, na.rm = TRUE),
+              stdev = sd(TLC_takeover, na.rm = TRUE),
+              mn = mean(TLC_takeover, na.rm = TRUE),
               cv = stdev/mn)
 
 
-range_plot <- ggplot(pp_quantiles, aes(x = ttlc_onset, y = cv, fill = cogload, col = cogload)) +
+range_plot <- ggplot(pp_quantiles, aes(x = TLC_onset, y = cv, fill = cogload, col = cogload)) +
   
-  geom_area(data = pp_quantiles, alpha = .1) + #50%band
-  geom_area(data = sig_fixed, alpha = .1) + #50% band
-  geom_area(data = raneff_range, alpha = .1) +
+  geom_area(data = pp_quantiles, col = "blue", alpha = .1) + #fully predictive (including uncertainty)
+  geom_area(data = sig_fixed, col = "red", alpha = .1) + #median parameters for population within pp variability
+  geom_area(data = raneff_range, col = "green", alpha = .1) + #median parameters for fixed and random
   theme_classic() +
-  xlab(expression("TTLC"["Failure"]*" (s)")) +
+  xlab(expression("TLC"["Failure"]*" (s)")) +
   facet_wrap(~cogload) +
   coord_cartesian(xlim = c(2,13)) +#, ylim = c(0, 10)) +
   ylab(parse(text = TeX('$\\sigma / \\mu$'))) +
@@ -899,14 +959,14 @@ ggsave("variability_stack.eps", plot = range_plot, dev = cairo_ps, width = 13.2,
 
 ```
 
-```{r, variability plot take 2}
+```{r, variability plot take 2, fig.width= 3.42, fig.height=4.72}
 
 print(mean(sig_fixed$range95 / pp_quantiles$range95))
 print(mean(raneff_range$range95 / pp_quantiles$range95))
 print(1- mean(raneff_range$range95 / pp_quantiles$range95))
 print(mean(raneff_range$range95 / pp_quantiles$range95) - mean(sig_fixed$range95 / pp_quantiles$range95))
 
-props_df <- tibble(ttlc_onset = pp_quantiles$ttlc_onset,
+props_df <- tibble(TLC_onset = pp_quantiles$TLC_onset,
                    cogload = pp_quantiles$cogload,
                    within_pp = sig_fixed$cv,
                    between_pp = raneff_range$cv,
@@ -915,15 +975,15 @@ props_df <- tibble(ttlc_onset = pp_quantiles$ttlc_onset,
 avg_cv <- pp_quantiles %>% 
   group_by(cogload) %>% 
   summarise(cvmn = mean(cv),
-            sdcv = sd(cv))
+            sdcv = sd(cv)) 
 
 
 noload_range<- filter(props_df, cogload == "noload")$full_range
 props_df$noload_full <- rep(noload_range, each = 2)
 
-#CV is unstable when mean is low, so filter from 2 ttlc above
+#CV is unstable when mean is low, so filter from 2 TLC above
 #CV is already standardised, so don't need to be a proportion of no load.
-props_df <- tibble(ttlc_onset = pp_quantiles$ttlc_onset,
+props_df <- tibble(TLC_onset = pp_quantiles$TLC_onset,
                    cogload = pp_quantiles$cogload,
                    within_pp = sig_fixed$cv,
                    between_pp = raneff_range$cv,
@@ -936,7 +996,7 @@ props_df <- props_df %>%
 
 
 agg_df <- props_df %>% 
-  filter(ttlc_onset >= 2) %>% 
+  filter(TLC_onset >= 2) %>% 
   group_by(cogload) %>% 
   summarise(within = mean(within_pp),
             between = mean(between_component),
@@ -957,7 +1017,7 @@ prop_plot <- ggplot(data = agg_df, aes(x = rev(component), y = cv, fill = rev(co
   theme_classic() +
   xlab("Source of Variability") +
   #ylab(parse(text = TeX("$\\% \\, SupAuto \\, \\pm 2\\sigma \\, range$"))) +
-  ylab("Coefficient of Variation") +
+  ylab("CV") +
   scale_y_continuous(breaks = seq(0,1, .1), label=function(x){return(x)}, ) +
   scale_x_discrete(labels = rev(c("Est", "Betw","Within"))) +
   theme_orca +
@@ -969,10 +1029,10 @@ prop_plot <- ggplot(data = agg_df, aes(x = rev(component), y = cv, fill = rev(co
 
 print(prop_plot)
 
-predicted_plot <- plot_grid(pred_ribbon, prop_plot, ncol = 2, labels = c("A","B"), label_size = 12, rel_widths = c(1.25,1))
+predicted_plot <- plot_grid(pred_ribbon, prop_plot, ncol = 1, labels = c("A","B"), label_size = 12, rel_heights = c(1.5,1))
 print(predicted_plot)
 
-ggsave("predictive_intervals.eps", plot = predicted_plot, dev = cairo_ps, width = 13.2, height = 7, units = "cm", dpi = 300)
+ggsave("predictive_intervals.eps", plot = predicted_plot, dev = cairo_ps, width = 8.7, height = 12, units = "cm", dpi = 300)
 
 ggsave("predictive_intervals.png", plot = predicted_plot, dev = "png", width = 13.2, height = 7, units = "cm", dpi = 300, type = "cairo")
 #print(effects_grid)
@@ -983,8 +1043,8 @@ ggsave("predictive_intervals.png", plot = predicted_plot, dev = "png", width = 1
 
 ```{r, hypotheticals}
 off_tangent <- function(w = 1.5, r = 60, v = 8){
-  #ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
-  ttlc = sqrt(w*(2*r + w)/(v^2))
+  #TLC = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+  TLC = sqrt(w*(2*r + w)/(v^2))
 }
 
 
@@ -1019,7 +1079,7 @@ v2r = kph^2 / radii
 
 motorway <- data.frame("radii" = radii, "mph" = mph, "kph" = kph, "ms" = ms, "yawrate" = yawrate, "v2r" = v2r)
 motorway <- motorway %>% 
-  mutate(ttlc_tangent = off_tangent(w = 1.825, r = radii, v = ms))
+  mutate(TLC_tangent = off_tangent(w = 1.825, r = radii, v = ms))
 print(motorway)
 
 #for single lane carriageways. national speed limit 60 mph (96.6 kph)
@@ -1032,11 +1092,11 @@ v2r = kph^2 / radii
 
 single <- data.frame("radii" = radii, "mph" = mph, "kph" = kph, "ms" = ms, "yawrate" = yawrate, "v2r" = v2r)
 single <- single %>% 
-  mutate(ttlc_tangent_wide = off_tangent(w = 1.825, r = radii, v = ms),
-         ttlc_tangent_narrow = off_tangent(w = 1.5, r = radii, v = ms),)
+  mutate(TLC_tangent_wide = off_tangent(w = 1.825, r = radii, v = ms),
+         TLC_tangent_narrow = off_tangent(w = 1.5, r = radii, v = ms),)
 print(single)
 
-#Uk standards basically range from 1-3 s ttlc.
+#Uk standards basically range from 1-3 s TLC.
 #Reasonably sharp bend, 60 mph, 500. Standard lane width (3.65 m)
 mph = c(60,70)
 kph = mph * 1.6
@@ -1046,8 +1106,8 @@ yawrate = ms/radii
 v2r = kph^2 / radii
 tests <- data.frame("radii" = radii, "mph" = mph, "kph" = kph, "ms" = ms, "yawrate" = yawrate, "v2r" = v2r)
 tests <- tests %>% 
-  mutate(ttlc_tangent_wide = off_tangent(w = 1.825, r = radii, v = ms),
-         ttlc_tangent_narrow = off_tangent(w = 1.5, r = radii, v = ms),)
+  mutate(TLC_tangent_wide = off_tangent(w = 1.825, r = radii, v = ms),
+         TLC_tangent_narrow = off_tangent(w = 1.5, r = radii, v = ms),)
 print(tests)
 
 #Gradual motorway, 70 mph, 1500. Standard lane width (3.65 m)
@@ -1059,10 +1119,10 @@ print(tests)
 
 
 #prcros
-#what was the minimum ttlc that didn't exit the road? .15. That will be our estimate fo pcross.
+#what was the minimum TLC that didn't exit the road? .15. That will be our estimate fo pcross.
 
 
-#minimum ttlc for nonexiters is .15 (though the exiters range from .09 - .6 ttlc.)
+#minimum TLC for nonexiters is .15 (though the exiters range from .09 - .6 TLC.)
 # based on the hypothetical roads
 
 notexit <- data_RTs_cens %>% 
@@ -1071,17 +1131,29 @@ notexit <- data_RTs_cens %>%
 exited <- data_RTs_cens %>% 
   filter(maxsb > 1.5)
 
+mean(exited$TLC_takeover, na.rm = TRUE)
+
 if (REFIT) {
   samples <- as.data.frame(MOD[["fit"]]@sim[["samples"]][[1]])
   samples <- samples[1001:10000, ]
   pc <- simulate_pcross(samples, 0)
   save(pc, file = 'pcross.rda')  
   
-  pc15 <- simulate_pcross(samples, .15)
-  save(pc15, file = 'pcross15.rda')  
+  pc25 <- simulate_pcross(samples, .25)
+  save(pc25, file = 'pcross25.rda')  
+  
+  pc50 <- simulate_pcross(samples, .5)
+  save(pc50, file = 'pcross50.rda')  
+  
+  pc75 <- simulate_pcross(samples, .75)
+  save(pc75, file = 'pcross75.rda')  
+  
+  pc100 <- simulate_pcross(samples, 1)
+  save(pc100, file = 'pcross100.rda')  
   
   samps <- samples[1:2000,] #only a subset..
-  pc_full <- simulate_pcross(samps, tt = c(0,.05,.1,.15,.2,.25,.3,.35,.4,.45,.5,.55,.6,.65,.7,.75,.8,.85,.9,.95,1), ttlc_onset = c(1.6,2.7))
+  pc_full <- simulate_pcross(samps, tt = c(0,.05,.1,.15,.2,.25,.3,.35,.4,.45,.5,.55,.6,.65,.7,.75,.8,.85,.9,.95,1,
+                                           1.05,1.1,1.15,1.2,1.25,1.3,1.35,1.4,1.45,1.5), TLC_onset = c(1.6,2.7))
   save(pc_full, file = 'pcross_full.rda')  
   
   #pc50 <- simulate_pcross(samples, .5)
@@ -1089,7 +1161,10 @@ if (REFIT) {
   
 } else {
   load('pcross.rda')  
-  load('pcross15.rda')  
+  load('pcross25.rda')  
+  load('pcross50.rda')  
+  load('pcross75.rda')
+  load('pcross100.rda')
   load('pcross_full.rda')
   
 }
@@ -1100,7 +1175,7 @@ if (REFIT) {
 ```
 
 
-```{r, pcross plot}
+```{r, pcross plot, fig.width=5.2, fig.height=2.4}
 
 #load('pcross.rda')
 onesd = .683
@@ -1110,9 +1185,9 @@ twosd = .955
 twosd.l = .5 - (twosd/2)
 twosd.u = .5 + (twosd/2)
 
-pc_bounds <- pc15 %>% 
+pc_bounds <- pc50 %>% 
   ungroup() %>% 
-  group_by(ttlc_onset, cogload) %>% 
+  group_by(TLC_onset, cogload) %>% 
   summarise(Estimate = mean(val),
             Q2.25 = qi(val, .width = twosd)[1],
             Q15.85 = qi(val, .width = onesd)[1],
@@ -1122,29 +1197,27 @@ pc_bounds <- pc15 %>%
 psim <- ggplot() +
   #geom_line(col = "blue") +
  #geom_line(data = loaddf, col = "red") +
- # geom_line(data = toplot, aes(x = ttlc_onset, y =pcross, col = cogload, group = interaction(pp,cogload)), inherit.aes = FALSE, alpha = .2) +
+ # geom_line(data = toplot, aes(x = TLC_onset, y =pcross, col = cogload, group = interaction(pp,cogload)), inherit.aes = FALSE, alpha = .2) +
   
-  #geom_line(data = pc_avg, aes(x = ttlc_onset, y =pcross, col = cogload, group = cogload), inherit.aes = FALSE, alpha = 1) +
-  #geom_line(data = pc, aes(x = ttlc_onset, y =val, col = cogload, group = interaction(draw,cogload)), inherit.aes = FALSE, alpha = .2) +  
+  #geom_line(data = pc_avg, aes(x = TLC_onset, y =pcross, col = cogload, group = cogload), inherit.aes = FALSE, alpha = 1) +
+  #geom_line(data = pc, aes(x = TLC_onset, y =val, col = cogload, group = interaction(draw,cogload)), inherit.aes = FALSE, alpha = .2) +  
 
-    geom_line(data = pc_bounds, aes(x = ttlc_onset, y =Estimate, col = cogload, group = cogload), inherit.aes = FALSE, alpha = 1, linetype = 1) +  
+    geom_line(data = pc_bounds, aes(x = TLC_onset, y =Estimate, col = cogload, group = cogload), inherit.aes = FALSE, alpha = 1, linetype = 1) +  
   
-  geom_ribbon(data =pc_bounds, aes(x=ttlc_onset, ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1, inherit.aes = FALSE) + #99% band
-  geom_ribbon(data = pc_bounds, aes(x = ttlc_onset, ymin = Q15.85, ymax = Q84.15, fill = cogload), alpha = .2, inherit.aes = FALSE) + #50% band
+  geom_ribbon(data =pc_bounds, aes(x=TLC_onset, ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1, inherit.aes = FALSE) + #99% band
+  geom_ribbon(data = pc_bounds, aes(x = TLC_onset, ymin = Q15.85, ymax = Q84.15, fill = cogload), alpha = .2, inherit.aes = FALSE) + #50% band
   
   geom_vline(xintercept =  1.6, col = "grey40", linetype = 3) +
   geom_vline(xintercept = 2.7, col = "grey40", linetype = 2) +
-  annotate("text", x = 3.7, y = .075, label = "Motorway Bend", hjust = .5, vjust = 0, size = ansize) +
-  annotate("segment", x = 3.1, xend = 2.72, y = .073, yend = .0675, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  annotate("text", x = 2.7, y = .12, label = "Motorway Bend", hjust = .5, vjust = -.5, size = ansize, angle = -90, col = "grey40") +
+  annotate("text", x = 1.6, y = .12, label = "Rural Road Bend", hjust = .5, vjust = -.5, size = ansize, angle = -90, col = "grey40") +
   
-  annotate("text", x = 2.6, y = .095, label = "Rural Road Bend", hjust = .5, vjust = 0, size = ansize) +
-  annotate("segment", x = 2.2, xend = 1.62, y = .093, yend = .0875, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
   
   theme_classic() +
   ylab("P(Exit)") +
-  xlab(expression("TTLC"["Failure"]*" (s)")) +
-  coord_cartesian(xlim = c(.5, 7), ylim = c(0,.125)) +
-  scale_y_continuous(breaks = c(0, 0.04, 0.08, 0.12), labels = c("0",".04",".08",".12")) +
+  xlab(expression("TLC"["Failure"]*" (s)")) +
+  coord_cartesian(xlim = c(.25, 10), ylim = c(0,.15)) +
+  scale_y_continuous(breaks = c(0, 0.05, 0.1, 0.15), labels = c("0",".05",".1",".15")) +
   
   scale_color_manual(values = rev(cogload_cols), labels = c('SupAuto+ACMT', 'SupAuto'), guide = guide_legend(reverse = FALSE), ) + scale_fill_manual(values = rev(cogload_cols), guide = F) +
   theme(legend.position = c(.7,.9),
@@ -1160,7 +1233,7 @@ ggsave("simulated_pcross.png", plot = psim, dev = "png", width = 13.2, height = 
 ggsave("simulated_pcross.eps", plot = psim, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
 ```
 
-```{r, plotting p_full}
+```{r, plotting p_full, fig.width= 3.42, fig.height=4.33}
 
 onesd = .683
 onesd.l = .5 - (onesd/2)
@@ -1171,27 +1244,30 @@ twosd.u = .5 + (twosd/2)
 
 pc_bounds_full <- pc_full %>% 
   ungroup() %>% 
-  group_by(ttlc_onset, cogload, tminus) %>% 
+  group_by(TLC_onset, cogload, tminus) %>% 
   summarise(Estimate = mean(val),
             Q2.25 = qi(val, .width = twosd)[1],
             Q15.85 = qi(val, .width = onesd)[1],
             Q84.15 = qi(val, .width = onesd)[2],
             Q97.75 = qi(val, .width = twosd)[2])
-
+mydelay = .5
 
 
 p_delay <- ggplot(pc_bounds_full, aes(x = as.numeric(tminus), col = factor(cogload), y = Estimate, group = cogload)) +
-  geom_line(data = filter(pc_bounds_full, ttlc_onset == 1.6), linetype = 3) +
-  geom_line(data = filter(pc_bounds_full, ttlc_onset == 2.7), linetype = 2) +
+  geom_line(data = filter(pc_bounds_full, TLC_onset == 1.6), linetype = 3) +
+  geom_line(data = filter(pc_bounds_full, TLC_onset == 2.7), linetype = 2) +
   scale_color_manual(values = rev(cogload_cols), labels = c('SupAuto+ACMT', 'SupAuto'), guide = FALSE) +
   theme_classic() +
   theme_orca +
   expand_limits(y= 1)+
-  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1), labels = c("0",".25",".5",".75", "1")) +
-  scale_x_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1), labels = c("0",".25",".5",".75", "1")) +
-  geom_vline(xintercept = .15, col = "grey80") +
-  annotate("text", x = .35, y = .825, label = "Delay used for\ncurrent predictions", hjust = .5, vjust = 0, size = ansize) +
-  annotate("segment", x = .23, xend = .16, y = .79, yend = .745, colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  coord_cartesian(x = c(0,1.5)) +
+  #scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0",".5", "1")) +
+  ##scale_x_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1, 1.25,1.5), labels = c("0",".25",".5",".75", "1")) +
+  geom_vline(xintercept = mydelay, col = "grey80") +
+  annotate("text", x = mydelay, y = .6, label = "Delay used for predictions", hjust = .5, vjust = -0.5, size =
+6/text_multiplier, angle = -90, col = "grey80") +
+    annotate("text", x = .9, y = .7, label = "Rural", hjust = .5, vjust = -.5, size = 6/text_multiplier, angle = 50, col = "grey40") +
+      annotate("text", x = 1.1, y = .41, label = "Motorway", hjust = .5, vjust = -.7, size = 6/text_multiplier, angle = 40, col = "grey40") +
   ylab("P(Exit)") +
   xlab("Additional Delay (s)") +
   theme(legend.position = c(.7,.9),
@@ -1202,12 +1278,69 @@ p_delay <- ggplot(pc_bounds_full, aes(x = as.numeric(tminus), col = factor(coglo
 
 print(p_delay)
 
-p_applied <- plot_grid(psim, p_delay, labels = c("A","B"), label_size = 12, ncol = 2, rel_widths = c(1.7,1))
+p_applied <- plot_grid(psim, p_delay, labels = c("A","B"), label_size = 12, ncol = 1, rel_heights = c(1.25,1))
 show(p_applied)
 
-ggsave("p_applied.png", plot = p_applied, dev = "png", width = 13.2, height = 6, units = "cm", dpi = 300, type = "cairo")
+ggsave("p_applied.png", plot = p_applied, dev = "png", width = 8.7, height = 11, units = "cm", dpi = 300, type = "cairo")
 
-ggsave("p_applied.eps", plot = p_applied, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
+ggsave("p_applied.eps", plot = p_applied, dev = cairo_ps, width = 8.7, height = 11, units = "cm", dpi = 300)
+
+```
+
+```{r, appendix psim, fig.width=7, fig.height=4}
+
+plot_psim <- function(psim){
+  
+  pc_bounds <- psim %>% 
+        ungroup() %>% 
+  group_by(TLC_onset, cogload) %>% 
+  summarise(Estimate = mean(val),
+            Q2.25 = qi(val, .width = twosd)[1],
+            Q15.85 = qi(val, .width = onesd)[1],
+            Q84.15 = qi(val, .width = onesd)[2],
+            Q97.75 = qi(val, .width = twosd)[2])
+
+  p <- ggplot() +
+    geom_line(data = pc_bounds, aes(x = TLC_onset, y =Estimate, col = cogload, group = cogload), inherit.aes = FALSE, alpha = 1, linetype = 1) +  
+  geom_ribbon(data =pc_bounds, aes(x=TLC_onset, ymin = Q2.25, ymax = Q97.75, fill = cogload), col = NA, alpha = .1, inherit.aes = FALSE) +
+  geom_ribbon(data = pc_bounds, aes(x = TLC_onset, ymin = Q15.85, ymax = Q84.15, fill = cogload), alpha = .2, inherit.aes = FALSE) +
+  theme_classic() +
+  ylab("P(Exit)") +
+  xlab(expression("TLC"["Failure"]*" (s)")) +
+  coord_cartesian(xlim = c(.25, 10), ylim = c(0,.25)) +
+  #scale_y_continuous(breaks = c(0, 0.05, 0.1, 0.15), labels = c("0",".05",".1",".15")) +
+  scale_color_manual(values = rev(cogload_cols), labels = c('SupAuto+ACMT', 'SupAuto'), guide = guide_legend(reverse = FALSE), ) + scale_fill_manual(values = rev(cogload_cols), guide = F) +
+  theme(legend.title = element_blank(),
+        legend.background = element_blank()) +
+  theme_orca
+  return (p)
+}
+
+
+psims <- list(pc,pc25,pc50,pc75,pc100)
+plots <- lapply(psims, plot_psim)
+legend <- get_legend(
+  plots[[1]] 
+)
+
+p_appendix <- plot_grid(plots[[1]] + theme(legend.position = "none"),
+                        plots[[2]] + theme(legend.position = "none"), 
+                        plots[[3]] + theme(legend.position = "none"), 
+                        plots[[4]]+ theme(legend.position = "none"), 
+                        plots[[5]] + theme(legend.position = "none"), 
+                        legend,
+                        labels = c("0 s",".25 s",".5 s",".75 s","1 s"), 
+                        label_size = 12, label_x = .7, label_y = .95, nrow = 2)
+
+
+
+print(p_appendix)
+
+
+
+
+
+ggsave("p_sim_appendix.eps", plot = p_appendix, dev = cairo_ps, width = 17.8, height = 10, units = "cm", dpi = 300)
 
 ```
 

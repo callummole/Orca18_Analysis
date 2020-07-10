@@ -18,6 +18,7 @@ library(latex2exp)
 library(bayestestR)
 library(grid)
 library(zoo)
+library(ggridges)
 
 #blue and red from matplotlib tab10 default color cycle to match up with python plots.
 cogload_cols = c("#1f77b4","#d62728")
@@ -31,13 +32,13 @@ pred_col = "grey60"
 data_col = "black"
 
 #add theme here
-theme_orca <- theme(text = element_text(family = "sans", size = 10),
+theme_orca <- theme(text = element_text(family = "sans", size = 8),
                     axis.text = element_text(family = "sans", size = 8),
-                    axis.title = element_text(family = "sans", size = 10),
+                    axis.title = element_text(family = "sans", size = 8),
                     ) 
 
 text_multiplier <- ggplot2:::.pt
-ansize = 8/text_multiplier
+ansize = 7/text_multiplier
 pred_col = "grey60"
 
 
@@ -72,14 +73,14 @@ steerdata <- steerdata %>%
 
 
 
-ttlc_from_offset <- function(b, w = 1.5, r = 80, v = 8){
+TLC_from_offset <- function(b, w = 1.5, r = 80, v = 8){
   b = b / 180 * pi
   
-  ttlc = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
+  TLC = sqrt(w*(2*r + sign(b)*w)/(abs(b)*r*v))
 }
 
 steerdata <- steerdata %>% 
-  mutate(ttlc_onset = ttlc_from_offset(sab))
+  mutate(TLC_onset = TLC_from_offset(sab))
 
 #add RT and disengage flag.
 disengage_RT <- function(onsettime, timestamp_trial, autoflag){
@@ -114,11 +115,11 @@ steerdata$cogload<- plyr::mapvalues(steerdata$cogload, from = c("None", "Middle"
 
 steerdata <- steerdata %>% 
   ungroup() %>% 
-  mutate(ttlc_takeover = ttlc_onset - RT,
+  mutate(TLC_takeover = TLC_onset - RT,
         premature = ifelse(RT <= 0, 1, 0),
         time_remaining = 15 - onsettime, 
         early = time_remaining - RT,
-        ttlc_end_of_trial = ttlc_onset - time_remaining)
+        TLC_end_of_trial = TLC_onset - time_remaining)
 ```
 
 ```{r, manuscript info}
@@ -139,7 +140,7 @@ balanced_only <- filter(data_fromtakeover, design == "balanced")
 
 ```
 
-```{r, plotting data_fromtakeover, warning = FALSE}
+```{r, plotting data_fromtakeover, warning = FALSE, fig.width= 7, fig.height=3.54}
 
 exitters <- data_fromtakeover %>% 
   filter(abs(sb_mirrored) > 1.5) %>% 
@@ -148,7 +149,7 @@ exitters <- data_fromtakeover %>%
 
 roll_lines <- balanced_only %>% 
   ungroup() %>% 
-  group_by(cogload, ttlc_onset, f) %>% 
+  group_by(cogload, TLC_onset, f) %>% 
   summarise(medsb = median(sb_mirrored),
             medswa = median(swa_mirrored)) %>% 
   mutate(roll_sb = rollapply(medsb, 15, mean, align = "left", partial = TRUE),
@@ -157,12 +158,12 @@ roll_lines <- balanced_only %>%
 
 uniq <- balanced_only %>% 
   ungroup() %>% 
-  arrange(ttlc_onset) %>% 
-  select(ttlc_onset) %>% 
+  arrange(TLC_onset) %>% 
+  select(TLC_onset) %>% 
   unique(.)
 dat_titles<- data.frame(
-  label = c(" 1.93 s", "4.21 s", "6.38 s", "8.37 s"),
-  ttlc_onset = uniq$ttlc_onset)
+  label = c(" 2.2 s", "4.7 s", "7.1 s", "9.6 s"),
+  TLC_onset = uniq$TLC_onset)
 
 balanced_only <- filter(balanced_only, f <= 180)
 roll_lines <- filter(roll_lines, f <= 180)
@@ -178,9 +179,9 @@ p_lpos <- ggplot(balanced_only, aes(x = f / 60, y = sb_mirrored, group = trialid
   scale_color_manual(values = cogload_cols, labels =rev(c('SupAuto+ACMT', 'SupAuto')), guide = FALSE) +
   
   #facet laps, change facet border, and place legend
-  ylab("Steering Bias (m)") + xlab("Time from Takeover (s)") +
+  ylab("Lane Position (m)") + xlab("Time from Takeover (s)") +
   theme_classic() +
-  facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return(""))) +
+  facet_wrap(~TLC_onset, labeller = as_labeller(function(x)return(""))) +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
        panel.grid = element_blank(),
@@ -206,7 +207,7 @@ p_swa <- ggplot(balanced_only, aes(x = f / 60, y = swa_mirrored, group = trialid
   #facet laps, change facet border, and place legend
   ylab(expression("Steering Wheel Angle ("*degree*")")) + xlab("Time from Takeover (s)") +
   theme_classic() +
-  facet_wrap(~ttlc_onset, labeller = as_labeller(function(x)return(""))) +
+  facet_wrap(~TLC_onset, labeller = as_labeller(function(x)return(""))) +
   theme(panel.border = element_blank(), 
        panel.background = element_blank(), 
        panel.grid = element_blank(),
@@ -223,7 +224,7 @@ print(measures_grid)
 
 ggsave("steering_measures_plt.png", plot = measures_grid, dev = "png", width = 18, height = 10, units = "cm", dpi = 300, type = "cairo")
 
-ggsave("steering_measures_plt.eps", plot = measures_grid, dev = cairo_ps, width = 13.2, height = 8.5, units = "cm", dpi = 300)
+ggsave("steering_measures_plt.eps", plot = measures_grid, dev = cairo_ps, width = 17.8, height = 9, units = "cm", dpi = 300)
 
 ```
 
@@ -256,6 +257,7 @@ data_fromtakeover <- data_fromtakeover %>%
         swa_max_idx2 = which.max(abs(swa_mirrored-swa_to)),
         swa_max = max(abs(swa_mirrored[1:frames_u]-swa_to)),
         sb_mn = mean(sb_mirrored),
+        sb_max = max(abs(sb_mirrored)),
         sw_var = sd(swa))
 
 
@@ -267,9 +269,10 @@ data_sb <- data_fromtakeover %>%
   summarise(SDLP = sd(steeringbias),
             sw_var = first(sw_var),
             sab = first(sab),
-            ttlc_takeover = first(ttlc_takeover),
+            TLC_takeover = first(TLC_takeover),
             cogload = first(cogload),
             sb_mn = first(sb_mn),
+            sb_max = first(sb_max),
             rms = sqrt(mean((sb_mirrored^2))),
             ppid = first(ppid),
             design = first(design),
@@ -281,25 +284,43 @@ data_sb <- data_fromtakeover %>%
             dmax = max(abs(diff(swa_mirrored))),
             noinput = ifelse(dmax == 0, 1, 0),
             RT = first(RT),
-            ttlc_onset = first(ttlc_onset),
+            TLC_onset = first(TLC_onset),
             onsettime = first(onsettime),
             frames = n()) %>% 
   filter(frames > frames_l)
+
+ggplot(data = data_sb, aes(x = TLC_takeover, y = swa_max)) + geom_point(alpha = .2)
+ggplot(data = data_sb, aes(x = log(TLC_takeover), y = log(swa_max))) + geom_point(alpha = .2)
+
+sim_TLCs <- read_csv("../Post-processing/simulated_ttlcs.csv")#col_types = cols(
+joined <- merge(data_sb, sim_TLCs, by =c("sab","onsettime"))
+
+
+#redo variables quickly. #CHANGE!!!!
+joined <- joined %>% 
+  mutate(TLC_onset = simulated_ttlc,
+         TLC_takeover = TLC_onset - RT)
+
+ggplot(data = joined, aes(x = TLC_takeover, y = swa_max)) + geom_point(alpha = .2)
+ggplot(data = joined, aes(x = log(TLC_takeover), y = log(swa_max))) + geom_point(alpha = .2)
+data_sb <- joined
 
 trials_included = length(unique(data_sb$trialid))
 print(ntrials - trials_included) #number omitted
 print( (ntrials - trials_included) / ntrials ) #number omitted
 print(mean(data_sb$swa_max_idx/60))
+print(sd(data_sb$swa_max_idx/60))
 
 ggplot(data = data_sb, aes(y = swa_max_uc, x = swa_to)) + geom_point(alpha = .2) +
   geom_abline(slope = 1, intercept = 0) +
   geom_hline(yintercept = c(-90,90))
 
 
+
 ggplot(data_sb, aes(x = swa_max_idx / 60, y = swa_max)) +
   geom_point(alpha = .2)
 
-ggplot(data = data_sb, aes(y = log(swa_max), x = log(ttlc_takeover))) + geom_point(alpha = .2) 
+ggplot(data = data_sb, aes(y = log(swa_max), x = log(TLC_takeover))) + geom_point(alpha = .2) 
   #geom_abline(slope = 1, intercept = 0) +
   #geom_hline(yintercept = c(-90,90))
 
@@ -323,23 +344,35 @@ print(cor_table)
 
 plot_trial <- function(df){
   trial= sample(unique(df$trialid), 1)
-  ggplot(filter(df, trialid == trial), aes(x = f/ 60, y = swa_mirrored)) +
+ ggplot(filter(df, trialid == trial), aes(x = f/ 60, y = swa_mirrored)) +
          geom_path() +
-    geom_line(aes(y = swa_max_uc), col = "blue") +
-    geom_line(aes(y = swa_to), col = "red") +
-    geom_vline(aes(xintercept = swa_max_idx / 60), col = "green") +
-    geom_vline(aes(xintercept = swa_max_idx2 / 60), col = "green") +
-    geom_vline(aes(xintercept = 90 / 60), col = "grey") 
+    geom_line(aes(y = swa_max_uc), col = "grey", linetype = "dashed") +
+    geom_text(label="Maximum Angle", aes(y=swa_max_uc, x = 2.5), vjust = -.5, size = ansize, col = "grey") +
+    geom_line(aes(y = swa_to), col = "grey", linetype = "dashed") +
+    geom_text(label="Initial Angle", aes(y=swa_to, x = 2.5), vjust = -.5, size = ansize, col = "grey") +
+    geom_segment(aes( x = swa_max_idx/60, xend = swa_max_idx/60, y = swa_to, yend=swa_max_uc), col = "cornflowerblue") +
+    geom_text(label = expression("SWA"["Max"]), aes(x = swa_max_idx/60, y = swa_to + ((swa_max_uc-swa_to)/2)), col = "cornflowerblue", angle = -90, vjust = -.5) +
+    
+    geom_vline(aes(xintercept = 120 / 60), col = "grey") +
+    geom_text(label="2 s window", aes(y = swa_to + ((swa_max_uc-swa_to)/2), x = 120/60), vjust = -.5, size = ansize, col = "grey", angle = -90) +
+    theme_classic() + theme_orca +
+    ylab(expression("Steering Wheel Angle ("*degree*")")) + xlab("Time from Takeover (s)") 
     
   
 }
 
 plot_trial(data_fromtakeover)#plots an individual steering trace and highlights swa_max 
+
+
+
+
+ggsave("swa_max_methods.eps", plot = last_plot(), dev = cairo_ps, width = 11.4, height = 7, units = "cm", dpi = 300)
+    
 ```
 
 ```{r, fit model, warning = FALSE}
 
-data_sb <- mutate(data_sb, log_swamax = log(swa_max), log_ttake = log(ttlc_takeover))
+data_sb <- mutate(data_sb, log_swamax = log(swa_max), log_ttake = log(TLC_takeover))
 
 data_sb <- filter(data_sb, noinput == 0) #there is one trial where the SWA doesn't change but the driver disengages
 
@@ -371,18 +404,18 @@ if (REFIT){
             set_prior("normal(0,1)", class="sigma"),
             set_prior("cauchy(0,1)", class="sd"))
 
-  save_stancode(form2, data_sb, gaussian(), mod = "m3")
+  save_stancode(form3, data_sb, gaussian(), mod = "m3")
 
   m3 <-brm(data = data_sb, formula = form3, family = gaussian(), prior = myprior,
                iter = 10000, cores = 4, refresh = 500, chains = 1, warmup = 1000)
 
-  save(m3, file  = 'model_swa_loglog.rda')
+  save(m3, file  = 'model_swa_loglog_simTLC.rda')
   
 } else {
-  load('model_swa_loglog.rda')
+  load('model_swa_loglog_simTLC.rda')
 }
 
-plot(m3)
+
 summary(m3)
 pp_check(m3)
 
@@ -399,8 +432,8 @@ twosd.l = .5 - (twosd/2)
 twosd.u = .5 + (twosd/2)
 
 
-ttlc_take <- seq(.1, to = 13, by = .1)
-log_ttake <- log(ttlc_take)
+TLC_take <- seq(.1, to = 13, by = .1)
+log_ttake <- log(TLC_take)
 cogload <- c("noload")
 pred_list <- expand_grid(log_ttake, cogload)
 preds <- predict(m3, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
@@ -417,17 +450,17 @@ plot_data <- data_sb %>%
    filter(design == "balanced") %>% 
    ungroup()
 
-p_raw_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = ttlc_takeover, y = swa_max)) +
+p_raw_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = TLC_takeover, y = swa_max)) +
   
   
   geom_ribbon(data = preds, aes(x = exp(log_ttake), ymin = exp(Q2.25), ymax = exp(Q97.75)), fill = pred_col, col = NA, alpha = .1, inherit.aes = F) + #99% band
   geom_ribbon(data = preds, aes(x = exp(log_ttake), ymin = exp(Q15.85), ymax = exp(Q84.15)), fill = pred_col, alpha = .3, inherit.aes = F) + #50% band
   geom_line(data = preds, aes(x = exp(log_ttake), y = exp(Estimate)), col = pred_col, size = 1.5, inherit.aes = F, alpha = 1) + #mean 
   
-  geom_point(data = filter(data_sb, cogload == "noload", design == "random"), aes(x = ttlc_takeover, y= swa_max), alpha = .25, col = data_col, size = 1) + #raw data
-    geom_point(data = filter(plot_data, cogload == "noload"), aes(x = ttlc_takeover, y= swa_max, col = factor(ttlc_onset)), alpha = .25, size = 1) + #coloured 
+  geom_point(data = filter(data_sb, cogload == "noload", design == "random"), aes(x = TLC_takeover, y= swa_max), alpha = .25, col = data_col, size = 1) + #raw data
+    geom_point(data = filter(plot_data, cogload == "noload"), aes(x = TLC_takeover, y= swa_max, col = factor(TLC_onset)), alpha = .25, size = 1) + #coloured 
   scale_colour_manual(values = balanced_cols, guide = F) +
-  xlab(expression("TTLC"["Takeover"]*" (s)")) + ylab(expression("SWA"["Max"]*" "*degree)) +
+  xlab(expression("TLC"["Takeover"]*" (s)")) + ylab(expression("SWA"["Max"]*" "*degree)) +
   theme_classic() +
   theme_orca +
   coord_cartesian(xlim = c(0,8), ylim = c(0,90))
@@ -438,37 +471,37 @@ leg_b = -.5 #starting bottom
 leg_l = -1.5 #left align
 leg_h = .2 #space between dot and text
 
-p_log_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = log(ttlc_takeover), y = log(swa_max))) +
+p_log_max <- ggplot(filter(data_sb, cogload == "noload"), aes(x = log(TLC_takeover), y = log(swa_max))) +
   
   geom_ribbon(data = preds, aes(x = log_ttake, ymin = Q2.25, ymax = Q97.75), fill = pred_col, col = NA, alpha = .1, inherit.aes = F) + #99% band
   geom_ribbon(data = preds, aes(x = log_ttake, ymin = Q15.85, ymax = Q84.15), fill = pred_col, alpha = .3, inherit.aes = F) + #50% band
   geom_line(data = preds, aes(x = log_ttake, y = Estimate), col = pred_col, size = 1.5, inherit.aes = F, alpha = 1) + #mean 
   
-  geom_point(data = filter(data_sb, cogload == "noload", design == "random"), aes(x = log(ttlc_takeover), y= log(swa_max)), alpha = .25, col = data_col, size = 1) + #raw data
-    geom_point(data = filter(plot_data, cogload == "noload"), aes(x = log(ttlc_takeover), y= log(swa_max), col = factor(ttlc_onset)), alpha = .25, size = 1) + #coloured 
+  geom_point(data = filter(data_sb, cogload == "noload", design == "random"), aes(x = log(TLC_takeover), y= log(swa_max)), alpha = .25, col = data_col, size = 1) + #raw data
+    geom_point(data = filter(plot_data, cogload == "noload"), aes(x = log(TLC_takeover), y= log(swa_max), col = factor(TLC_onset)), alpha = .25, size = 1) + #coloured 
   scale_colour_manual(values = balanced_cols, guide = F) +
-  xlab(expression("Log(TTLC"["Takeover"]*" (s) )")) + ylab(expression("Log(SWA"["Max"]*degree*")")) +
+  xlab(expression("Log(TLC"["Takeover"]*" (s) )")) + ylab(expression("Log(SWA"["Max"]*degree*")")) +
   theme_classic() +
   coord_cartesian(xlim = c(-2, 2.2), ylim = c(-1, 4.5)) +
   theme_orca +
   
   #custom legend
   annotate("point", x = leg_l, y= leg_b + (5*leg_v), col = balanced_cols[1], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (5*leg_v), label = "1.93 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (5*leg_v), label = "2.2 s", hjust = 0, vjust = .5, size = ansize) +
   
   annotate("point", x = leg_l, y= leg_b + (4*leg_v), col = balanced_cols[2], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (4*leg_v), label = "4.21 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (4*leg_v), label = "4.7 s", hjust = 0, vjust = .5, size = ansize) +
   
   annotate("point", x = leg_l, y= leg_b + (3*leg_v), col = balanced_cols[3], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (3*leg_v), label = "6.39 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (3*leg_v), label = "7.1 s", hjust = 0, vjust = .5, size = ansize) +
   
   annotate("point", x = leg_l, y= leg_b + (2*leg_v), col = balanced_cols[4], shape = 20, size = 2, alpa = .25) +
-  annotate("text", x = leg_l+leg_h, y = leg_b + (2*leg_v), label = "8.37 s", hjust = 0, vjust = .5, size = ansize) +
+  annotate("text", x = leg_l+leg_h, y = leg_b + (2*leg_v), label = "9.6 s", hjust = 0, vjust = .5, size = ansize) +
   
   annotate("point", x = leg_l, y= leg_b + (leg_v), col = pred_col, shape = 20, size = 2, alpa = .25) +
   annotate("text", x = leg_l+leg_h, y = leg_b + (leg_v), label = "Non-Repeated", hjust = 0, vjust = .5, size = ansize) 
   
-p_log_max_load <- ggplot(filter(data_sb, cogload == "load"), aes(x = log(ttlc_takeover), y = log(swa_max))) +
+p_log_max_load <- ggplot(filter(data_sb, cogload == "load"), aes(x = log(TLC_takeover), y = log(swa_max))) +
   theme_classic() +
   geom_ribbon(data = preds, aes(x = log_ttake, ymin = Q2.25, ymax = Q97.75), fill = cogload_cols[2], col = NA, alpha = .1, inherit.aes = F) + #99% band
   geom_ribbon(data = preds, aes(x = log_ttake, ymin = Q15.85, ymax = Q84.15), fill = cogload_cols[2], alpha = .3, inherit.aes = F) + #50% band
@@ -488,9 +521,11 @@ p_log_max_load <- ggplot(filter(data_sb, cogload == "load"), aes(x = log(ttlc_ta
 
 swamax_grid <- plot_grid(p_raw_max, p_log_max, ncol = 2, labels = c("A","B"), label_size = 12)
 
+print(swamax_grid)
+
 ```
 
-```{r, predictive plots, warning = FALSE}
+```{r, predictive plots, warning = FALSE, fig.width= 4.49, fig.height=3.93}
 
 
 onesd = .683
@@ -502,8 +537,8 @@ twosd.u = .5 + (twosd/2)
 
 
 
-ttlc_take <- seq(.1, to = 13, by = .1)
-log_ttake <- log(ttlc_take)
+TLC_take <- seq(.1, to = 13, by = .1)
+log_ttake <- log(TLC_take)
 cogload <- c("noload","load")
 pred_list <- expand_grid(log_ttake, cogload)
 preds <- predict(m3, newdata=pred_list, summary=TRUE, allow_new_levels = TRUE, probs = c(twosd.l, onesd.l, onesd.u, twosd.u)) %>% 
@@ -529,7 +564,7 @@ loglog <- ggplot(preds, aes(x = log_ttake, group = cogload, col = cogload)) +
         legend.title = element_blank(),
         legend.background = element_blank(),
         legend.key.size = unit(.75,"line")) +
-  xlab(expression("Log(TTLC"["Takeover"]*" (s) )")) + ylab(expression("Log(SWA"["Max"]*degree*")")) +
+  xlab(expression("Log(TLC"["Takeover"]*" (s) )")) + ylab(expression("Log(SWA"["Max"]*degree*")")) +
   
   coord_cartesian(xlim = c(-2, 2.2), ylim = c(-1, 4.5)) +
   theme_orca
@@ -547,13 +582,13 @@ raw_preds <- ggplot(preds, aes(x = exp(log_ttake), group = cogload, col = cogloa
         legend.title = element_blank(),
         legend.background = element_blank(),
         legend.key.size = unit(.75,"line")) +
-  xlab(expression("TTLC"["Takeover"]*" (s)")) + ylab(expression("SWA"["Max"]*degree)) 
+  xlab(expression("TLC"["Takeover"]*" (s)")) + ylab(expression("SWA"["Max"]*degree)) 
 
 
 steering_model_res <- plot_grid(p_raw_max, p_log_max, raw_preds, loglog, ncol = 2, nrow = 2, labels = c("A","B","C","D"), label_size = 12)
 print(steering_model_res)
-ggsave("swa_graphed_results.png", plot = steering_model_res, dev = "png", width = 13.2, height = 10, units = "cm", dpi = 300, type = "cairo")
-ggsave("swa_graphed_results.eps", plot = steering_model_res, dev = cairo_ps, width = 13.2, height = 10, units = "cm", dpi = 300)
+ggsave("swa_graphed_results.png", plot = steering_model_res, dev = "png", width = 11.4, height = 10, units = "cm", dpi = 300, type = "cairo")
+ggsave("swa_graphed_results.eps", plot = steering_model_res, dev = cairo_ps, width = 11.4, height = 10, units = "cm", dpi = 300)
 
 ```
 
@@ -611,5 +646,239 @@ p_coef <- m3 %>%
 #effects_grid <- plot_grid(forest, plot.with.inset, ncol = 2, labels = c("A","B"), label_size = 12, rel_widths = #c(1,1.75))
 #ggsave("swa_effects.png", plot = effects_grid, dev = "png", width = 18, height = 8, units = "cm", dpi = 300, type = "cairo")
 #ggsave("swa_effects.eps", plot = effects_grid, dev = cairo_ps, width = 13.2, height = 6, units = "cm", dpi = 300)
+
+```
+
+```{r, appendix cogload swa max}
+
+#logic to show indirect effects of cogload.
+#we see that reaction times are slowed. 
+#TF no difference
+#positive correlation with RT and 
+cors <- data_sb %>% 
+  filter(design == "balanced") %>% 
+  group_by(TLC_onset, cogload) %>% 
+  summarise(RT_r = cor.test(swa_max, RT, method = "pearson")$estimate,
+            RT_p = cor.test(swa_max, RT, method = "pearson")$p.value,
+            sb_RT_r = cor.test(sb_max, RT, method = "pearson")$estimate,
+            sb_RT_p = cor.test(sb_max, RT, method = "pearson")$p.value)
+  
+print(cors)
+print(mean(cors$RT_r))
+
+differences <- data_sb %>% 
+  filter(design == "balanced") %>% 
+  group_by(TLC_onset, cogload, ppid) %>% 
+  summarise(ppRT = median(RT),
+            ppswa = median(swa_max)) %>% 
+  ungroup() %>% 
+  group_by(TLC_onset, ppid) %>% #cogload differences
+  summarise(diffRT = ppRT[1]-ppRT[2],
+            diffswa = ppswa[1] - ppswa[2]) %>% 
+  ungroup() %>% 
+  group_by(ppid) %>%  #average across ttlc failures
+  summarise(mndiffRT = mean(diffRT),
+            mndiffswa = mean(diffswa)) %>% 
+  ungroup() %>% 
+  summarise(globaldiffRT = mean(mndiffRT),
+            globaldiffRT_sd = sd(mndiffRT),
+            globaldiffswa = mean(mndiffswa),
+            globaldiffswa_sd = sd(mndiffswa))
+  
+            
+
+summaries <- data_sb %>% 
+  filter(design == "balanced") %>% 
+  group_by(TLC_onset, cogload, ppid) %>% 
+  summarise(ppRT = median(RT),
+            ppswa = median(swa_max),
+            maxRT = max(RT),
+            minRT = min(RT),
+            maxswa = max(swa_max),
+            minswa = min(swa_max)) %>% 
+  ungroup() %>% 
+  group_by(TLC_onset,cogload) %>% 
+  summarise(mnRT = mean(ppRT),
+            sdRT = sd(ppRT),
+            mnswa = mean(ppswa),
+            sdswa = sd(ppswa),
+            maxRT = max(maxRT),
+            minRT = min(minRT),
+            maxswa = max(maxswa),
+            minswa = min(minswa))
+summaries <- summaries %>% 
+  group_by(TLC_onset) %>% 
+  mutate(maxswa = max(maxswa),
+         maxRT = max(maxRT),
+         minswa = min(minswa),
+         minRT = min(minRT))
+
+uniq <- filter(data_sb, design == "balanced") %>% 
+  ungroup() %>% 
+  arrange(TLC_onset) %>% 
+  select(TLC_onset) %>% 
+  unique(.)
+dat_titles<- data.frame(
+  label = c(" 2.2 s", "4.7 s", "7.1 s", "9.6 s"),
+  TLC_onset = uniq$TLC_onset)
+
+data_sb$failure_factor = as.factor(data_sb$TLC_onset)
+ggplot(filter(data_sb, design == "balanced"), aes(x = RT, y = swa_max, col = cogload)) + geom_point(alpha = .2) +
+  #coord_cartesian(xlim = c(-.8, 8), ylim = c(-8,80), clip = "off") +
+  geom_pointintervalh(data = summaries, aes(y = (as.numeric(cogload)*(maxswa*-.05)) , x = mnRT, xmin = mnRT - sdRT, xmax = mnRT + sdRT, col = cogload), fatten_point = 1, size = 1) +
+  geom_pointinterval(data = summaries, aes(x =(as.numeric(cogload)*(maxRT*-.05)) , y = mnswa, ymin = mnswa - sdswa, ymax = mnswa + sdswa, col = cogload), fatten_point = 1, size = 1) +
+  theme_classic() +
+  facet_wrap(~TLC_onset, scales = "free", labeller = as_labeller(function(x)return(""))) +
+  theme(#panel.border = element_blank(), 
+       #panel.background = element_blank(), 
+       #panel.grid = element_blank(),
+       strip.background = element_blank(),
+       legend.position = c(0.65, 0.35),
+       legend.title = element_blank(),
+       legend.direction = "vertical",
+       legend.background = element_blank(),
+       legend.key.size = unit(.75,"line")) +
+  theme_orca +
+  scale_color_manual(values = cogload_cols, labels = rev(c('SupAuto+ACMT', 'SupAuto'))) +
+  #geom_text(data = dat_titles, aes(x = 4, y = Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols) +
+  xlab("RT (s)") + 
+  ylab(expression("SWA"["Max"]*degree)) 
+  
+ggsave("swa_RT_appendix.eps", plot = last_plot(), dev = cairo_ps, width = 11.4, height = 10, units = "cm", dpi = 300)
+``` 
+
+```{r, appendix cogload sb max, fig.width = 4.88, fig.height = 3.93}
+
+#logic to show indirect effects of cogload.
+#we see that reaction times are slowed. 
+#TF no difference
+#positive correlation with RT and 
+cors <- data_sb %>% 
+  filter(design == "balanced") %>% 
+  group_by(TLC_onset, cogload) %>% 
+  summarise(RT_r = cor.test(swa_max, RT, method = "pearson")$estimate,
+            RT_p = cor.test(swa_max, RT, method = "pearson")$p.value,
+            sb_RT_r = cor.test(sb_max, RT, method = "pearson")$estimate,
+            sb_RT_p = cor.test(sb_max, RT, method = "pearson")$p.value)
+  
+print(cors)
+print(mean(cors$sb_RT_r))
+
+differences <- data_sb %>% 
+  filter(design == "balanced") %>% 
+  group_by(TLC_onset, cogload, ppid) %>% 
+  summarise(ppRT = median(RT),
+            ppsb = median(sb_max)) %>% 
+  ungroup() %>% 
+  group_by(TLC_onset, ppid) %>% #cogload differences
+  summarise(diffRT = ppRT[1]-ppRT[2],
+            diffsb = ppsb[1] - ppsb[2]) %>% 
+  ungroup() %>% 
+  group_by(ppid) %>%  #average across ttlc failures
+  summarise(mndiffRT = mean(diffRT),
+            mndiffsb = mean(diffsb)) %>% 
+  ungroup() %>% 
+  summarise(globaldiffRT = mean(mndiffRT),
+            globaldiffRT_sd = sd(mndiffRT),
+            globaldiffsb = mean(mndiffsb),
+            globaldiffsb_sd = sd(mndiffsb))
+  
+            
+
+summaries <- data_sb %>% 
+  filter(design == "balanced") %>% 
+  group_by(TLC_onset, cogload, ppid) %>% 
+  summarise(ppRT = median(RT),
+            ppsb = median(sb_max),
+            maxRT = max(RT),
+            minRT = min(RT),
+            maxsb = max(sb_max),
+            minsb = min(sb_max)) %>% 
+  ungroup() %>% 
+  group_by(TLC_onset,cogload) %>% 
+  summarise(mnRT = mean(ppRT),
+            sdRT = sd(ppRT),
+            mnsb = mean(ppsb),
+            sdsb = sd(ppsb),
+            maxRT = max(maxRT),
+            minRT = min(minRT),
+            maxsb = max(maxsb),
+            minsb = min(minsb))
+summaries <- summaries %>% 
+  group_by(TLC_onset) %>% 
+  mutate(maxsb = max(maxsb),
+         maxRT = max(maxRT),
+         minsb = min(minsb),
+         minRT = min(minRT))
+
+uniq <- filter(data_sb, design == "balanced") %>% 
+  ungroup() %>% 
+  arrange(TLC_onset) %>% 
+  select(TLC_onset) %>% 
+  unique(.)
+dat_titles<- data.frame(
+  label = c(" 2.2 s", "4.7 s", "7.1 s", "9.6 s"),
+  TLC_onset = uniq$TLC_onset)
+
+data_sb$failure_factor = as.factor(data_sb$TLC_onset)
+ggplot(filter(data_sb, design == "balanced"), aes(x = RT, y = sb_max, col = cogload)) + geom_point(alpha = .2) +
+  #coord_cartesian(xlim = c(-.8, 8), ylim = c(-8,80), clip = "off") +
+  geom_pointintervalh(data = summaries, aes(y = (as.numeric(cogload)*(maxsb*-.05)) , x = mnRT, xmin = mnRT - sdRT, xmax = mnRT + sdRT, col = cogload), fatten_point = 1, size = 1) +
+  geom_pointinterval(data = summaries, aes(x =(as.numeric(cogload)*(maxRT*-.05)) , y = mnsb, ymin = mnsb - sdsb, ymax = mnsb + sdsb, col = cogload), fatten_point = 1, size = 1) +
+  theme_classic() +
+  facet_wrap(~TLC_onset, scales = "free", labeller = as_labeller(function(x)return(""))) +
+  theme(#panel.border = element_blank(), 
+       #panel.background = element_blank(), 
+       #panel.grid = element_blank(),
+       strip.background = element_blank(),
+       legend.position = c(0.2, 0.4),
+       legend.title = element_blank(),
+       legend.direction = "vertical",
+       legend.background = element_blank(),
+       legend.key.size = unit(.75,"line")) +
+  theme_orca +
+  scale_color_manual(values = cogload_cols, labels = rev(c('SupAuto+ACMT', 'SupAuto'))) +
+  #geom_text(data = dat_titles, aes(x = 4, y = Inf, label = label), inherit.aes = FALSE, size = ansize, vjust = 0, col = balanced_cols) +
+  xlab("RT (s)") + 
+  ylab("Lane Position (m)") 
+  
+ggsave("sb_RT_appendix.eps", plot = last_plot(), dev = cairo_ps, width = 11.4, height = 10, units = "cm", dpi = 300)
+```
+
+```{r, ppchecks for appendix,  fig.width = 4.88, fig.height = 3.93}
+
+balanced_data <- filter(data_sb, design == "balanced")
+preds <- balanced_data %>% 
+  add_predicted_draws(m3, summary = FALSE)
+
+ttlc.names = c(" 2.2 s", "4.7 s", "7.1 s", "9.6 s")
+names(ttlc.names) = uniq$TLC_onset
+
+cogload.names = c(" SupAuto", "SupAuto+ACMT")
+names(cogload.names) = c("noload","load")
+
+
+pp_checks <- ggplot(balanced_data, aes(x = log(swa_max), y = ..density..)) + 
+  geom_density_ridges(data = preds, aes(x = .prediction, col = factor(TLC_onset)), size = 1, rel_min_height = .005) +
+  geom_histogram(aes(fill = factor(TLC_onset)), alpha = .5, position = "identity", bins = 50) +
+  scale_colour_manual(values = balanced_cols, guide = F) +
+  scale_fill_manual(values = balanced_cols, guide = F) +
+  #coord_cartesian(xlim = c(0, 7), clip= "off") +
+  theme_classic() +
+  facet_grid(TLC_onset~cogload, labeller = labeller(TLC_onset = ttlc.names, cogload= cogload.names)) + 
+  theme(panel.border = element_blank(), 
+       panel.background = element_blank(), 
+       panel.grid = element_blank(),
+       strip.background = element_blank()) +
+  theme_orca +
+  #custom legend
+   
+  ylab("Density") +
+  xlab(expression("log"["swamax"]*" (s)"))
+
+print(pp_checks)
+
+ggsave("swa_pp_checks.eps", plot = last_plot(), dev = cairo_ps, width = 11.4, height = 10, units = "cm", dpi = 300)
+
 
 ```

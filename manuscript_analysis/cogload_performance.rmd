@@ -16,7 +16,7 @@ setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 FilePath <- "../Data/" 
 text_multiplier <- ggplot2:::.pt
-ansize = 8/text_multiplier
+ansize = 6/text_multiplier
 
 ```
 
@@ -271,37 +271,37 @@ cor(ppid_rts$mn_rt, ppid_rts$mn_RT)
 
 ```
 
-```{r, methods fig, trial sequence, fig.height = 2, fig.width=5.2}
+```{r, methods fig, trial sequence, fig.height = 2, fig.width=3.5}
 
-library(RColorBrewer)
-cols <- brewer.pal(6, "Paired")[3:6]
+#library(RColorBrewer)
+#cols <- brewer.pal(6, "Paired")[3:6]
 
-
+mycol = "#ff7f0e"
 #pick trial
-trialids <- wit_df %>%
-  filter(ppid > 3, block == 3) %>% 
+trialids <- steerdata %>% 
+  filter(ppid>3, cogload == "Middle", simulated_ttlc > 4.6, simulated_ttlc < 4.8) %>% 
   select(trialid) %>% 
-  unique(.) 
-  
+  unique(.)
+
 trial <- sample(trialids$trialid,1)
 
-
+trial_steer <- filter(steerdata, trialid == trial)
 trial_cog <- filter(wit_df, trialid == trial)
 trial_cog <- trial_cog %>% 
   mutate(CurrentAudio = toupper(CurrentAudio))
 targets <- filter(trial_cog, currentaudio_type == "T")
 distractors <- filter(trial_cog, currentaudio_type == "D")
-trial_steer <- filter(steerdata, trialid == trial)
-head(trial_cog)
+
+#head(trial_cog)
 
 takeover_frame <-  trial_steer[first(which(trial_steer$autoflag == "FALSE")),]
 onset_frame <- (filter(trial_steer, timestamp_trial > first(trial_steer$onsettime)))[1,]
 first_frame <- trial_steer[1,]
 time_axis <- data.frame(ts = seq.int(0, 15), ts_exp = seq.int(0,15) + first_frame$timestamp_exp)
 
-head(onset_frame)
-head(trial_cog)
-head(trial_steer)
+#head(onset_frame)
+#head(trial_cog)
+#head(trial_steer)
 
 t_y = .75
 
@@ -309,6 +309,7 @@ leg_v = .22 #vertical spacing
 leg_t = -.7 #starting top
 leg_l = first_frame$timestamp_exp+13 #left align
 leg_h = .32 #space between dot and text
+lw = .5 #width of labels
 leg_t1 = -.5 #starting top
 leg_l1 = first_frame$timestamp_exp+.5
 
@@ -317,24 +318,28 @@ p_timings <- ggplot(trial_steer, aes(x = timestamp_exp, y = sb_mirrored)) +
   
   
   #labels
-  geom_text(data = onset_frame, aes( x = timestamp_exp - 1, y = sb_mirrored - .8, label = "Failure onset"), size = ansize) +
-  geom_segment(data = onset_frame, aes(x = timestamp_exp - 1, xend = timestamp_exp - .1, y = sb_mirrored -.7, yend = sb_mirrored - .1), colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
-  geom_text(data = takeover_frame, aes( x = timestamp_exp - 1, y = sb_mirrored - .6, label = "Takeover"), size = ansize) +
-  geom_segment(data = takeover_frame, aes(x = timestamp_exp - 1, xend = timestamp_exp - .1, y = sb_mirrored - .5, yend = sb_mirrored - .1), colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  #geom_text(data = onset_frame, aes( x = timestamp_exp - 1, y = sb_mirrored - .8, label = "Failure onset"), size = ansize) +
+  #geom_segment(data = onset_frame, aes(x = timestamp_exp - 1, xend = timestamp_exp - .1, y = sb_mirrored -.7, yend = sb_mirrored - .1), colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  #geom_text(data = takeover_frame, aes( x = timestamp_exp - 1, y = sb_mirrored - .6, label = "Takeover"), size = ansize) +
+  #geom_segment(data = takeover_frame, aes(x = timestamp_exp - 1, xend = timestamp_exp - .1, y = sb_mirrored - .5, yend = sb_mirrored - .1), colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
   
   
   
   #cogtask
   geom_segment(data = targets, aes(x = timestamp_exp, xend = timestamp_exp, y = 0, yend = t_y), col = "grey40") +
-  geom_segment(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp, xend = timestamp_exp + RT, y = t_y, yend = t_y), linetype = "dotted", col = "grey40") +
+  #geom_segment(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp, xend = timestamp_exp + RT, y = t_y, yend = t_y), linetype = "dotted", col = "grey40") +
+    geom_segment(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp + RT, xend = timestamp_exp + RT, y = 0, yend = t_y), col = "green3") +
   geom_point(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp + RT, y = t_y), fill = "green3", col = "green3", shape = 22) +
-  geom_segment(data = filter(targets, ResponseCategory == 1), aes(x = timestamp_exp + RT, xend = timestamp_exp + RT, y = 0, yend = t_y), col = "#33A02C") +
+
   geom_text(data = targets, aes(x = timestamp_exp, y = t_y+.15, label = CurrentAudio), size = ansize, col = "grey40") +
-  geom_segment(data = distractors, aes(x = timestamp_exp, xend = timestamp_exp, y = 0, yend = .5), col = "grey60", linetype = "dashed") + 
+  geom_segment(data = distractors, aes(x = timestamp_exp, xend = timestamp_exp, y = 0, yend = .5), col = "grey60", linetype = "dotted") + 
   geom_text(data = distractors, aes(x = timestamp_exp, y = .65, label = CurrentAudio), size = ansize, col = "grey60") +
   
-  scale_color_manual(values = c("TRUE" = cols[4], "FALSE" = cols[3])) +
-  guides(col = FALSE) +
+  #scale_color_manual(values = c("TRUE" = cols[4], "FALSE" = cols[3])) +
+  scale_linetype_manual(values=c("TRUE" = "solid", "FALSE" = "dotted")) +
+  guides(linetype = FALSE) +
+  #guides(col = FALSE) +
+  
   
   
   #time axis
@@ -346,39 +351,142 @@ p_timings <- ggplot(trial_steer, aes(x = timestamp_exp, y = sb_mirrored)) +
   geom_segment(data = time_axis, aes(x = ts_exp, y = 0, xend = ts_exp, yend = .05)) +
   
   #steering signal
-  geom_path(aes(group = autoflag, col = autoflag)) +
+  geom_path(aes(group = autoflag, linetype = autoflag), col = mycol) +
   geom_point(data = onset_frame, fill = "black", col = "black", shape = 23) +
   geom_point(data = takeover_frame, fill = "black", col = "black", shape = 23) +
-  coord_cartesian(ylim = c(-1.5,1.5)) +
+  scale_y_reverse(lim = c(1.5,-1.5)) +
   theme_classic() +
   
 
   #custom legend
-  annotate("segment", x = leg_l1-leg_h, xend = leg_l1, y= leg_t1, yend = leg_t1, col = "grey60", linetype = "dashed") +
+  annotate("segment", x = leg_l1-lw, xend = leg_l1, y= leg_t1, yend = leg_t1, col = "grey60", linetype = "dotted") +
   annotate("text", x = leg_l1+leg_h, y = leg_t1, label = "Distractors", hjust = 0, vjust = .5, size = ansize) +
   
-  annotate("segment", x = leg_l1-leg_h, xend = leg_l1, y= leg_t1 - (leg_v), yend = leg_t1 - (leg_v), col = "grey40") +
+  annotate("segment", x = leg_l1-lw, xend = leg_l1, y= leg_t1 - (leg_v), yend = leg_t1 - (leg_v), col = "grey40") +
   annotate("text", x = leg_l1+leg_h, y = leg_t1 - (leg_v), label = "Targets", hjust = 0, vjust = .5, size = ansize) +
   
-  annotate("point", x = leg_l1-(leg_h/2), y= leg_t1 - (2*leg_v), fill="green3", col = "green3", shape = 22) +
+  annotate("point", x = leg_l1-(lw/2), y= leg_t1 - (2*leg_v), fill="green3", col = "green3", shape = 22) +
   annotate("text", x = leg_l1+leg_h, y = leg_t1 - (2*leg_v), label = "Button Press", hjust = 0, vjust = .5, size = ansize) +
 
-  annotate("segment", x = leg_l-leg_h, xend = leg_l, y= leg_t, yend = leg_t, col = cols[4]) +
+  #annotate("segment", x = leg_l-leg_h, xend = leg_l, y= leg_t, yend = leg_t, col = mycol) +
+  #annotate("text", x = leg_l+leg_h, y = leg_t, label = "Automation", hjust = 0, vjust = .5, size = ansize) +
+    
+    #annotate("segment", x = leg_l-leg_h, xend = leg_l, y= leg_t - (1*leg_v), yend = leg_t - (1*leg_v), col = mycol, linetype = "dotted") +
+  #annotate("text", x = leg_l+leg_h, y = leg_t - (1*leg_v), label = "Manual", hjust = 0, vjust = .5, size = ansize) +
+
+  #remove axis 
+  theme(axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank()) 
+  
+  
+print(p_timings)
+p_timings <- p_timings + scale_y_reverse(lim = c(1,-1.5)) 
+print(p_timings)
+ggsave("p_methods_timings.eps", plot = p_timings, dev = cairo_ps, width = 13.2, height = 5, units = "cm", dpi = 300)
+ggsave("p_methods_timings.svg", plot = p_timings, width = 9, height = 5, units = "cm", dpi = 300)
+
+```
+
+```{r, methods without cog, trial sequence, fig.height = 4, fig.width=3.5}
+
+#library(RColorBrewer)
+#cols <- brewer.pal(6, "Paired")[3:6]
+
+mycol = "#ff7f0e"
+#pick trial
+trialids <- steerdata %>% 
+  filter(ppid>3, cogload == "Middle", simulated_ttlc >4.6, simulated_ttlc < 4.8) %>% 
+  select(trialid) %>% 
+  unique(.)
+
+trial <- sample(trialids$trialid,1)
+
+trial_steer <- filter(steerdata, trialid == trial)
+
+head(trial_cog)
+
+takeover_frame <-  trial_steer[first(which(trial_steer$autoflag == "FALSE")),]
+onset_frame <- (filter(trial_steer, timestamp_trial > first(trial_steer$onsettime)))[1,]
+first_frame <- trial_steer[1,]
+time_axis <- data.frame(ts = seq.int(0, 15), ts_exp = seq.int(0,15) + first_frame$timestamp_exp)
+
+head(onset_frame)
+head(trial_steer)
+
+t_y = .75
+
+leg_v = .22 #vertical spacing
+leg_t = -.7 #starting top
+leg_l = first_frame$timestamp_exp+13 #left align
+leg_h = .32 #space between dot and text
+lw = .5
+leg_t1 = -.5 #starting top
+leg_l1 = first_frame$timestamp_exp+.5
+
+p_timings_noload <- ggplot(trial_steer, aes(x = timestamp_exp, y = sb_mirrored)) + 
+  
+  
+  
+  #labels
+  geom_text(data = onset_frame, aes( x = timestamp_exp - 1, y = sb_mirrored - .8, label = "Failure onset"), size = ansize) +
+  geom_segment(data = onset_frame, aes(x = timestamp_exp - 1, xend = timestamp_exp - .1, y = sb_mirrored -.7, yend = sb_mirrored - .1), colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  geom_text(data = takeover_frame, aes( x = timestamp_exp - 1, y = sb_mirrored - .6, label = "Takeover"), size = ansize) +
+  geom_segment(data = takeover_frame, aes(x = timestamp_exp - 1, xend = timestamp_exp - .1, y = sb_mirrored - .5, yend = sb_mirrored - .1), colour = "black", size=.75, alpha=1, arrow=arrow(angle = 20, length = unit(0.1, "cm"), type = "closed")) +
+  
+  
+  #scale_color_manual(values = c("TRUE" = cols[4], "FALSE" = cols[3])) +
+  scale_linetype_manual(values=c("TRUE" = "solid", "FALSE" = "dotted")) +
+  guides(linetype = FALSE) +
+  #guides(col = FALSE) +
+  
+  
+  
+  #time axis
+  geom_line(data = time_axis, aes(x = ts_exp, y = 0)) +
+  geom_point(data = time_axis[1,], aes(x = ts_exp, y = 0), size = 2) +
+  geom_point(data = tail(time_axis,1), aes(x = ts_exp, y = 0), size = 2) +
+  geom_text(data = tail(time_axis,1), aes(x = ts_exp, y = -.2, label = paste0(ts, " s")), size = ansize) +
+  geom_text(data = head(time_axis,1), aes(x = ts_exp, y = -.2, label = paste0(ts, " s")), size = ansize) +
+  geom_segment(data = time_axis, aes(x = ts_exp, y = 0, xend = ts_exp, yend = .05)) +
+  
+  #steering signal
+  geom_path(aes(group = autoflag, linetype = autoflag), col = mycol) +
+  geom_point(data = onset_frame, fill = "black", col = "black", shape = 23) +
+  geom_point(data = takeover_frame, fill = "black", col = "black", shape = 23) +
+  scale_y_reverse(lim = c(.5,-1.5)) +
+  theme_classic() +
+  
+
+  annotate("segment", x = leg_l-lw, xend = leg_l, y= leg_t, yend = leg_t, col = mycol) +
   annotate("text", x = leg_l+leg_h, y = leg_t, label = "Automation", hjust = 0, vjust = .5, size = ansize) +
     
-    annotate("segment", x = leg_l-leg_h, xend = leg_l, y= leg_t - (1*leg_v), yend = leg_t - (1*leg_v), col = cols[3]) +
+    annotate("segment", x = leg_l-lw, xend = leg_l, y= leg_t - (1*leg_v), yend = leg_t - (1*leg_v), col = mycol, linetype = "dotted") +
   annotate("text", x = leg_l+leg_h, y = leg_t - (1*leg_v), label = "Manual", hjust = 0, vjust = .5, size = ansize) +
 
   #remove axis 
   theme(axis.ticks = element_blank(),
         axis.line = element_blank(),
         axis.text = element_blank(),
-        axis.title = element_blank())
+        axis.title = element_blank()) 
   
-print(p_timings)
-ggsave("p_methods_timings.eps", plot = p_timings, dev = cairo_ps, width = 13.2, height = 5, units = "cm", dpi = 300)
+  
+print(p_timings_noload)
+ggsave("p_methods_timings_noload.eps", plot = p_timings_noload, dev = cairo_ps, width = 13.2, height = 5, units = "cm", dpi = 300)
+ggsave("p_methods_timings_noload.svg", plot = p_timings_noload, width = 9, height = 5, units = "cm", dpi = 300)
+
+
+double_timings <- plot_grid(p_timings_noload, p_timings, ncol = 1, labels = c("A","B"), rel_heights = c(2,2.5))
+print(double_timings)
+ggsave("p_methods_timings_double.eps", plot = double_timings, dev = cairo_ps, width = 8.7, height = 8, units = "cm", dpi = 300)
+
+ggsave("p_methods_timings_double.svg", plot = double_timings, width = 8.7, height = 10, units = "cm", dpi = 300)
+
+
 
 ```
+
 
 
 
