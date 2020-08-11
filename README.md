@@ -1,6 +1,6 @@
 Analysis repository for Silent Failures in Automation. Experiment Repository: https://github.com/callummole/SP_18-19
 
-Preprint: Mole et al., 2020, Predicting Takeover Response to silent automated failures.
+Preprint: Mole et al., 2020, Predicting Takeover Response to silent automated failures (https://psyarxiv.com/bv2pt/).
 
 Data information about raw and processed data can be found in the Data folder README.
 
