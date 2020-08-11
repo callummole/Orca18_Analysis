@@ -8,7 +8,7 @@ The key analysis files are in the folder _manuscript_analysis_. Also in this fol
 
 The folder _Processing_ contains code for eye-tracking, most of which has not been applied to the current dataset so is not worth looking at. The folder _Post-processing_ contains a range of part-baked scripts of different analysis adventures - also not worth looking at.  
 
-The analysis pipeline from the Raw_Data folder hosted on the OSF (X) to the manuscript figures is as follows:
+The analysis pipeline from the Raw_Data folder hosted on the OSF (https://osf.io/aw8kp/) to the manuscript figures is as follows:
 
 - Extract the Raw_Data folder into the local repo _Data_ folder.
 
